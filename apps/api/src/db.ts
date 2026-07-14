@@ -10,6 +10,7 @@ export const pool = new Pool({
 
 export type TaskRecord = {
   id: string
+  parentId: string | null
   summary: string
   notes: string
   completed: boolean
@@ -233,14 +234,18 @@ export async function deleteAttachment(id: string) {
 
 export async function listTasks() {
   if (!postgresAvailable) return localTasks
-  const result = await pool.query('SELECT id, summary, notes, completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', ['local'])
+  const result = await pool.query('SELECT id, parent_id AS "parentId", summary, notes, completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', ['local'])
   return result.rows as TaskRecord[]
 }
 
-export async function createTask(summary: string, notes: string) {
-  const task = { id: crypto.randomUUID(), summary, notes, completed: false, createdAt: new Date().toISOString() }
-  if (!postgresAvailable) { localTasks.unshift(task); await saveLocalTasks(); return task }
-  const result = await pool.query('INSERT INTO tasks (id, user_id, summary, notes) VALUES ($1, $2, $3, $4) RETURNING id, summary, notes, completed, created_at AS "createdAt"', [task.id, 'local', summary, notes])
+export async function createTask(summary: string, notes: string, parentId: string | null = null) {
+  const task = { id: crypto.randomUUID(), parentId, summary, notes, completed: false, createdAt: new Date().toISOString() }
+  if (!postgresAvailable) {
+    if (parentId && !localTasks.some(item => item.id === parentId)) return null
+    localTasks.unshift(task); await saveLocalTasks(); return task
+  }
+  const result = await pool.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes) SELECT $1, $2, $3::uuid, $4, $5 WHERE $3::uuid IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id = $3::uuid AND user_id = $2) RETURNING id, parent_id AS "parentId", summary, notes, completed, created_at AS "createdAt"', [task.id, 'local', parentId, summary, notes])
+  if (!result.rowCount) return null
   return result.rows[0] as TaskRecord
 }
 
@@ -257,7 +262,10 @@ export async function toggleTask(id: string) {
 export async function deleteTask(id: string) {
   if (!postgresAvailable) {
     const before = localTasks.length
-    localTasks = localTasks.filter(item => item.id !== id)
+    const removed = new Set([id])
+    let changed = true
+    while (changed) { changed = false; for (const item of localTasks) if (item.parentId && removed.has(item.parentId) && !removed.has(item.id)) { removed.add(item.id); changed = true } }
+    localTasks = localTasks.filter(item => !removed.has(item.id))
     if (before !== localTasks.length) await saveLocalTasks()
     return before !== localTasks.length
   }
@@ -298,7 +306,7 @@ export async function restoreData(data: RestoreData) {
     await client.query('DELETE FROM movies WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM music_tracks WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM memory_entries WHERE user_id = $1', ['local'])
-    for (const task of data.tasks) await client.query('INSERT INTO tasks (id, user_id, summary, notes, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6)', [task.id, 'local', task.summary, task.notes, task.completed, task.createdAt])
+    for (const task of [...data.tasks].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))) await client.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)', [task.id, 'local', task.parentId ?? null, task.summary, task.notes, task.completed, task.createdAt])
     for (const event of data.events) await client.query('INSERT INTO calendar_events (id, user_id, title, event_date, notes) VALUES ($1,$2,$3,$4,$5)', [event.id, 'local', event.title, event.date, event.notes])
     for (const idea of data.ideas) await client.query('INSERT INTO ideas (id, user_id, title, body, created_at) VALUES ($1,$2,$3,$4,$5)', [idea.id, 'local', idea.title, idea.body, idea.createdAt])
     for (const account of data.financialAccounts ?? []) await client.query('INSERT INTO financial_accounts (id, user_id, name, kind, currency, opening_balance_minor) VALUES ($1,$2,$3,$4,$5,$6)', [account.id, 'local', account.name, account.kind, account.currency, account.openingBalanceMinor])

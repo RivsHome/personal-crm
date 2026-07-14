@@ -40,7 +40,8 @@ app.addHook('preHandler', async (request, reply) => {
 
 const taskInput = z.object({
   summary: z.string().trim().min(1).max(240),
-  notes: z.string().max(5000).default('')
+  notes: z.string().max(5000).default(''),
+  parentId: z.string().uuid().nullable().optional().default(null)
 })
 const eventInput = z.object({ title: z.string().trim().min(1).max(240), date: z.string().date(), notes: z.string().max(5000).default('') })
 const ideaInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default('') })
@@ -54,7 +55,7 @@ const loginCredentials = z.object({ email: z.string().email(), password: z.strin
 const registrationCredentials = loginCredentials.extend({ name: z.string().trim().min(1).max(80) })
 const preferencesInput = z.object({ theme: z.enum(['dark', 'light']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), timezone: z.string().min(1).max(80).optional(), weekStart: z.enum(['sunday', 'monday']).optional(), modules: z.object({ calendar: z.boolean().optional(), tasks: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), widgets: z.object({ tasks: z.boolean().optional(), calendar: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), dashboardOrder: z.array(z.enum(['tasks', 'calendar', 'ideas'])).length(3).optional() })
 const restoreInput = z.object({
-  tasks: z.array(z.object({ id: z.string().uuid(), summary: z.string().min(1).max(240), notes: z.string(), completed: z.boolean(), createdAt: z.string().datetime() })),
+  tasks: z.array(z.object({ id: z.string().uuid(), parentId: z.string().uuid().nullable().optional().default(null), summary: z.string().min(1).max(240), notes: z.string(), completed: z.boolean(), createdAt: z.string().datetime() })),
   events: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), date: z.string().date(), notes: z.string() })),
   ideas: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), createdAt: z.string().datetime() })),
   financialAccounts: z.array(z.object({ id: z.string().uuid(), name: z.string().min(1).max(120), kind: z.string(), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int() })).optional().default([]),
@@ -139,7 +140,9 @@ app.post('/api/tasks', async (request, reply) => {
     return reply.code(400).send({ error: 'Invalid task', issues: parsed.error.issues })
   }
 
-  return reply.code(201).send(await createTask(parsed.data.summary, parsed.data.notes))
+  const created = await createTask(parsed.data.summary, parsed.data.notes, parsed.data.parentId)
+  if (!created) return reply.code(404).send({ error: 'Parent task not found' })
+  return reply.code(201).send(created)
 })
 
 app.patch('/api/tasks/:id/toggle', async (request, reply) => {
