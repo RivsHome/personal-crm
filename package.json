@@ -1,0 +1,14 @@
+{
+  "name": "personal-life-app",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace @personal-crm/api\" \"npm run dev --workspace @personal-crm/web\"",
+    "build": "npm run build --workspace @personal-crm/api && npm run build --workspace @personal-crm/web",
+    "typecheck": "npm run typecheck --workspace @personal-crm/api && npm run typecheck --workspace @personal-crm/web",
+    "test": "npm run test --workspace @personal-crm/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
