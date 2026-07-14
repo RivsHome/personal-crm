@@ -1,12 +1,13 @@
 {
   "name": "personal-life-app",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": ["apps/*", "packages/*", "mcp/*"],
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace @personal-crm/api\" \"npm run dev --workspace @personal-crm/web\"",
     "build": "npm run build --workspace @personal-crm/api && npm run build --workspace @personal-crm/web",
     "typecheck": "npm run typecheck --workspace @personal-crm/api && npm run typecheck --workspace @personal-crm/web",
-    "test": "npm run test --workspace @personal-crm/api"
+    "test": "npm run test --workspace @personal-crm/api",
+    "build:mcp": "npm run build --workspace @personal-crm/mcp"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
