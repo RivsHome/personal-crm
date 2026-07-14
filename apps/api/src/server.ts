@@ -2,7 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import { z } from 'zod'
-import { createEvent, createIdea, createTask, databaseReady, deleteTask, exportData, getPreferences, initializeDatabase, listEvents, listIdeas, listTasks, restoreData, toggleTask, updatePreferences } from './db.js'
+import { createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteTask, exportData, getPreferences, initializeDatabase, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listIdeas, listMemories, listMovies, listMusic, listTasks, restoreData, toggleGoal, toggleTask, updatePreferences } from './db.js'
 import { current, initializeAuth, login, logout, register } from './auth.js'
 
 const app = Fastify({ logger: true })
@@ -17,7 +17,7 @@ await app.register(cors, { origin: corsOrigin, credentials: true })
 await app.register(cookie)
 
 app.addHook('preHandler', async (request, reply) => {
-  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
+  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
   if (protectedPath && !current(request.cookies.session)) return reply.code(401).send({ error: 'Sign in required.' })
 })
 
@@ -27,14 +27,31 @@ const taskInput = z.object({
 })
 const eventInput = z.object({ title: z.string().trim().min(1).max(240), date: z.string().date(), notes: z.string().max(5000).default('') })
 const ideaInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default('') })
-const credentials = z.object({ email: z.string().email(), password: z.string().min(8).max(200), name: z.string().trim().min(1).max(80).optional() })
+const accountInput = z.object({ name: z.string().trim().min(1).max(120), kind: z.string().trim().min(1).max(40), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int().safe() })
+const transactionInput = z.object({ accountId: z.string().uuid(), description: z.string().trim().min(1).max(240), amountMinor: z.number().int().safe(), date: z.string().date(), category: z.string().trim().min(1).max(80) })
+const goalInput = z.object({ title: z.string().trim().min(1).max(240), targetMinor: z.number().int().positive().nullable(), dueDate: z.string().date().nullable() })
+const movieInput = z.object({ title: z.string().trim().min(1).max(240), year: z.number().int().min(1888).max(2200).nullable(), notes: z.string().max(5000).default('') })
+const musicInput = z.object({ title: z.string().trim().min(1).max(240), artist: z.string().max(160).default(''), album: z.string().max(160).default('') })
+const memoryInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default(''), occurredOn: z.string().date().nullable() })
+const loginCredentials = z.object({ email: z.string().email(), password: z.string().min(8).max(200) })
+const registrationCredentials = loginCredentials.extend({ name: z.string().trim().min(1).max(80) })
 const preferencesInput = z.object({ theme: z.enum(['dark', 'light']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), timezone: z.string().min(1).max(80).optional(), weekStart: z.enum(['sunday', 'monday']).optional(), modules: z.object({ calendar: z.boolean().optional(), tasks: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), widgets: z.object({ tasks: z.boolean().optional(), calendar: z.boolean().optional(), ideas: z.boolean().optional() }).optional() })
-const restoreInput = z.object({ tasks: z.array(z.object({ id: z.string().uuid(), summary: z.string().min(1).max(240), notes: z.string(), completed: z.boolean(), createdAt: z.string().datetime() })), events: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), date: z.string().date(), notes: z.string() })), ideas: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), createdAt: z.string().datetime() })) })
+const restoreInput = z.object({
+  tasks: z.array(z.object({ id: z.string().uuid(), summary: z.string().min(1).max(240), notes: z.string(), completed: z.boolean(), createdAt: z.string().datetime() })),
+  events: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), date: z.string().date(), notes: z.string() })),
+  ideas: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), createdAt: z.string().datetime() })),
+  financialAccounts: z.array(z.object({ id: z.string().uuid(), name: z.string().min(1).max(120), kind: z.string(), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int() })).optional().default([]),
+  financialTransactions: z.array(z.object({ id: z.string().uuid(), accountId: z.string().uuid(), description: z.string().min(1).max(240), amountMinor: z.number().int(), date: z.string().date(), category: z.string().min(1).max(80) })).optional().default([]),
+  goals: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), targetMinor: z.number().int().positive().nullable(), currentMinor: z.number().int(), dueDate: z.string().date().nullable(), completed: z.boolean() })).optional().default([]),
+  movies: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), year: z.number().int().nullable(), watched: z.boolean(), rating: z.number().int().nullable(), notes: z.string() })).optional().default([]),
+  music: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), artist: z.string(), album: z.string(), listened: z.boolean() })).optional().default([]),
+  memories: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), occurredOn: z.string().date().nullable() })).optional().default([])
+})
 
 app.get('/api/auth/me', async request => ({ user: current(request.cookies.session) }))
 app.post('/api/auth/register', async (request, reply) => {
-  const parsed = credentials.safeParse(request.body)
-  if (!parsed.success || !parsed.data.name) return reply.code(400).send({ error: 'Email, name, and an 8-character password are required.' })
+  const parsed = registrationCredentials.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Email, name, and an 8-character password are required.' })
   const created = await register(parsed.data.email, parsed.data.name, parsed.data.password)
   if (!created) return reply.code(409).send({ error: 'A workspace owner already exists.' })
   const session = await login(parsed.data.email, parsed.data.password)
@@ -42,7 +59,7 @@ app.post('/api/auth/register', async (request, reply) => {
   return created
 })
 app.post('/api/auth/login', async (request, reply) => {
-  const parsed = credentials.safeParse(request.body)
+  const parsed = loginCredentials.safeParse(request.body)
   if (!parsed.success) return reply.code(400).send({ error: 'Enter a valid email and password.' })
   const session = await login(parsed.data.email, parsed.data.password)
   if (!session) return reply.code(401).send({ error: 'Invalid email or password.' })
@@ -114,6 +131,50 @@ app.post('/api/ideas', async (request, reply) => {
   const parsed = ideaInput.safeParse(request.body)
   if (!parsed.success) return reply.code(400).send({ error: 'Invalid idea', issues: parsed.error.issues })
   return reply.code(201).send(await createIdea(parsed.data.title, parsed.data.body))
+})
+
+app.get('/api/finance/accounts', async () => listFinancialAccounts())
+app.post('/api/finance/accounts', async (request, reply) => {
+  const parsed = accountInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid account' })
+  return reply.code(201).send(await createFinancialAccount(parsed.data.name, parsed.data.kind, parsed.data.currency, parsed.data.openingBalanceMinor))
+})
+app.get('/api/finance/transactions', async () => listFinancialTransactions())
+app.post('/api/finance/transactions', async (request, reply) => {
+  const parsed = transactionInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid transaction' })
+  const created = await createFinancialTransaction(parsed.data.accountId, parsed.data.description, parsed.data.amountMinor, parsed.data.date, parsed.data.category)
+  if (!created) return reply.code(404).send({ error: 'Account not found' })
+  return reply.code(201).send(created)
+})
+app.get('/api/goals', async () => listGoals())
+app.post('/api/goals', async (request, reply) => {
+  const parsed = goalInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid goal' })
+  return reply.code(201).send(await createGoal(parsed.data.title, parsed.data.targetMinor, parsed.data.dueDate))
+})
+app.patch('/api/goals/:id/toggle', async (request, reply) => {
+  const goal = await toggleGoal((request.params as { id: string }).id)
+  if (!goal) return reply.code(404).send({ error: 'Goal not found' })
+  return goal
+})
+app.get('/api/movies', async () => listMovies())
+app.post('/api/movies', async (request, reply) => {
+  const parsed = movieInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid movie' })
+  return reply.code(201).send(await createMovie(parsed.data.title, parsed.data.year, parsed.data.notes))
+})
+app.get('/api/music', async () => listMusic())
+app.post('/api/music', async (request, reply) => {
+  const parsed = musicInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid track' })
+  return reply.code(201).send(await createMusic(parsed.data.title, parsed.data.artist, parsed.data.album))
+})
+app.get('/api/memories', async () => listMemories())
+app.post('/api/memories', async (request, reply) => {
+  const parsed = memoryInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid memory' })
+  return reply.code(201).send(await createMemory(parsed.data.title, parsed.data.body, parsed.data.occurredOn))
 })
 
 const port = Number(process.env.API_PORT ?? 3636)

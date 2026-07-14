@@ -18,6 +18,12 @@ export type TaskRecord = {
 
 export type EventRecord = { id: string; title: string; date: string; notes: string }
 export type IdeaRecord = { id: string; title: string; body: string; createdAt: string }
+export type FinancialAccount = { id: string; name: string; kind: string; currency: string; openingBalanceMinor: number; balanceMinor: number }
+export type FinancialTransaction = { id: string; accountId: string; description: string; amountMinor: number; date: string; category: string }
+export type GoalRecord = { id: string; title: string; targetMinor: number | null; currentMinor: number; dueDate: string | null; completed: boolean }
+export type MovieRecord = { id: string; title: string; year: number | null; watched: boolean; rating: number | null; notes: string }
+export type MusicRecord = { id: string; title: string; artist: string; album: string; listened: boolean }
+export type MemoryRecord = { id: string; title: string; body: string; occurredOn: string | null }
 export type Preferences = {
   theme: 'dark' | 'light'
   accent: string
@@ -118,6 +124,83 @@ export async function createIdea(title: string, body: string) {
   return result.rows[0] as IdeaRecord
 }
 
+export async function listFinancialAccounts(): Promise<FinancialAccount[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT a.id, a.name, a.kind, a.currency, a.opening_balance_minor AS "openingBalanceMinor", a.opening_balance_minor + COALESCE(SUM(t.amount_minor), 0) AS "balanceMinor"
+    FROM financial_accounts a LEFT JOIN financial_transactions t ON t.account_id = a.id AND t.user_id = a.user_id
+    WHERE a.user_id = $1 GROUP BY a.id ORDER BY a.created_at DESC`, ['local'])
+  return result.rows.map(row => ({ ...row, openingBalanceMinor: Number(row.openingBalanceMinor), balanceMinor: Number(row.balanceMinor) })) as FinancialAccount[]
+}
+
+export async function createFinancialAccount(name: string, kind: string, currency: string, openingBalanceMinor: number) {
+  const result = await pool.query(`INSERT INTO financial_accounts (id, name, kind, currency, opening_balance_minor) VALUES ($1,$2,$3,$4,$5)
+    RETURNING id, name, kind, currency, opening_balance_minor AS "openingBalanceMinor"`, [crypto.randomUUID(), name, kind, currency, openingBalanceMinor])
+  return { ...result.rows[0], openingBalanceMinor: Number(result.rows[0].openingBalanceMinor), balanceMinor: Number(result.rows[0].openingBalanceMinor) } as FinancialAccount
+}
+
+export async function listFinancialTransactions(): Promise<FinancialTransaction[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT id, account_id AS "accountId", description, amount_minor AS "amountMinor", transaction_date AS date, category
+    FROM financial_transactions WHERE user_id = $1 ORDER BY transaction_date DESC, created_at DESC`, ['local'])
+  return result.rows.map(row => ({ ...row, amountMinor: Number(row.amountMinor) })) as FinancialTransaction[]
+}
+
+export async function createFinancialTransaction(accountId: string, description: string, amountMinor: number, date: string, category: string) {
+  const result = await pool.query(`INSERT INTO financial_transactions (id, account_id, description, amount_minor, transaction_date, category)
+    SELECT $1, id, $3, $4, $5, $6 FROM financial_accounts WHERE id = $2 AND user_id = 'local'
+    RETURNING id, account_id AS "accountId", description, amount_minor AS "amountMinor", transaction_date AS date, category`, [crypto.randomUUID(), accountId, description, amountMinor, date, category])
+  if (!result.rowCount) return null
+  return { ...result.rows[0], amountMinor: Number(result.rows[0].amountMinor) } as FinancialTransaction
+}
+
+export async function listGoals(): Promise<GoalRecord[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT id, title, target_minor AS "targetMinor", current_minor AS "currentMinor", due_date AS "dueDate", completed
+    FROM goals WHERE user_id = $1 ORDER BY completed ASC, created_at DESC`, ['local'])
+  return result.rows.map(row => ({ ...row, targetMinor: row.targetMinor === null ? null : Number(row.targetMinor), currentMinor: Number(row.currentMinor) })) as GoalRecord[]
+}
+
+export async function createGoal(title: string, targetMinor: number | null, dueDate: string | null) {
+  const result = await pool.query(`INSERT INTO goals (id, title, target_minor, due_date) VALUES ($1,$2,$3,$4)
+    RETURNING id, title, target_minor AS "targetMinor", current_minor AS "currentMinor", due_date AS "dueDate", completed`, [crypto.randomUUID(), title, targetMinor, dueDate])
+  return { ...result.rows[0], targetMinor: result.rows[0].targetMinor === null ? null : Number(result.rows[0].targetMinor), currentMinor: Number(result.rows[0].currentMinor) } as GoalRecord
+}
+
+export async function toggleGoal(id: string) {
+  const result = await pool.query(`UPDATE goals SET completed = NOT completed, updated_at = NOW() WHERE id = $1 AND user_id = 'local'
+    RETURNING id, title, target_minor AS "targetMinor", current_minor AS "currentMinor", due_date AS "dueDate", completed`, [id])
+  if (!result.rowCount) return null
+  return { ...result.rows[0], targetMinor: result.rows[0].targetMinor === null ? null : Number(result.rows[0].targetMinor), currentMinor: Number(result.rows[0].currentMinor) } as GoalRecord
+}
+
+export async function listMovies(): Promise<MovieRecord[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT id, title, year, watched, rating, notes FROM movies WHERE user_id = $1 ORDER BY created_at DESC`, ['local'])
+  return result.rows as MovieRecord[]
+}
+export async function createMovie(title: string, year: number | null, notes: string) {
+  const result = await pool.query(`INSERT INTO movies (id, title, year, notes) VALUES ($1,$2,$3,$4) RETURNING id, title, year, watched, rating, notes`, [crypto.randomUUID(), title, year, notes])
+  return result.rows[0] as MovieRecord
+}
+export async function listMusic(): Promise<MusicRecord[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT id, title, artist, album, listened FROM music_tracks WHERE user_id = $1 ORDER BY created_at DESC`, ['local'])
+  return result.rows as MusicRecord[]
+}
+export async function createMusic(title: string, artist: string, album: string) {
+  const result = await pool.query(`INSERT INTO music_tracks (id, title, artist, album) VALUES ($1,$2,$3,$4) RETURNING id, title, artist, album, listened`, [crypto.randomUUID(), title, artist, album])
+  return result.rows[0] as MusicRecord
+}
+export async function listMemories(): Promise<MemoryRecord[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT id, title, body, occurred_on AS "occurredOn" FROM memory_entries WHERE user_id = $1 ORDER BY occurred_on DESC NULLS LAST, created_at DESC`, ['local'])
+  return result.rows as MemoryRecord[]
+}
+export async function createMemory(title: string, body: string, occurredOn: string | null) {
+  const result = await pool.query(`INSERT INTO memory_entries (id, title, body, occurred_on) VALUES ($1,$2,$3,$4) RETURNING id, title, body, occurred_on AS "occurredOn"`, [crypto.randomUUID(), title, body, occurredOn])
+  return result.rows[0] as MemoryRecord
+}
+
 export async function listTasks() {
   if (!postgresAvailable) return localTasks
   const result = await pool.query('SELECT id, summary, notes, completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', ['local'])
@@ -153,10 +236,19 @@ export async function deleteTask(id: string) {
 }
 
 export async function exportData() {
-  return { tasks: await listTasks(), events: await listEvents(), ideas: await listIdeas() }
+  return {
+    tasks: await listTasks(), events: await listEvents(), ideas: await listIdeas(),
+    financialAccounts: await listFinancialAccounts(), financialTransactions: await listFinancialTransactions(), goals: await listGoals(),
+    movies: await listMovies(), music: await listMusic(), memories: await listMemories()
+  }
 }
 
-export type RestoreData = { tasks: TaskRecord[]; events: EventRecord[]; ideas: IdeaRecord[] }
+export type RestoreData = {
+  tasks: TaskRecord[]; events: EventRecord[]; ideas: IdeaRecord[];
+  financialAccounts?: Array<{ id: string; name: string; kind: string; currency: string; openingBalanceMinor: number }>;
+  financialTransactions?: FinancialTransaction[]; goals?: GoalRecord[];
+  movies?: MovieRecord[]; music?: MusicRecord[]; memories?: MemoryRecord[]
+}
 
 export async function restoreData(data: RestoreData) {
   if (!postgresAvailable) {
@@ -170,9 +262,21 @@ export async function restoreData(data: RestoreData) {
     await client.query('DELETE FROM tasks WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM calendar_events WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM ideas WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM financial_transactions WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM financial_accounts WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM goals WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM movies WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM music_tracks WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM memory_entries WHERE user_id = $1', ['local'])
     for (const task of data.tasks) await client.query('INSERT INTO tasks (id, user_id, summary, notes, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6)', [task.id, 'local', task.summary, task.notes, task.completed, task.createdAt])
     for (const event of data.events) await client.query('INSERT INTO calendar_events (id, user_id, title, event_date, notes) VALUES ($1,$2,$3,$4,$5)', [event.id, 'local', event.title, event.date, event.notes])
     for (const idea of data.ideas) await client.query('INSERT INTO ideas (id, user_id, title, body, created_at) VALUES ($1,$2,$3,$4,$5)', [idea.id, 'local', idea.title, idea.body, idea.createdAt])
+    for (const account of data.financialAccounts ?? []) await client.query('INSERT INTO financial_accounts (id, user_id, name, kind, currency, opening_balance_minor) VALUES ($1,$2,$3,$4,$5,$6)', [account.id, 'local', account.name, account.kind, account.currency, account.openingBalanceMinor])
+    for (const transaction of data.financialTransactions ?? []) await client.query('INSERT INTO financial_transactions (id, user_id, account_id, description, amount_minor, transaction_date, category) VALUES ($1,$2,$3,$4,$5,$6,$7)', [transaction.id, 'local', transaction.accountId, transaction.description, transaction.amountMinor, transaction.date, transaction.category])
+    for (const goal of data.goals ?? []) await client.query('INSERT INTO goals (id, user_id, title, target_minor, current_minor, due_date, completed) VALUES ($1,$2,$3,$4,$5,$6,$7)', [goal.id, 'local', goal.title, goal.targetMinor, goal.currentMinor, goal.dueDate, goal.completed])
+    for (const movie of data.movies ?? []) await client.query('INSERT INTO movies (id, user_id, title, year, watched, rating, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)', [movie.id, 'local', movie.title, movie.year, movie.watched, movie.rating, movie.notes])
+    for (const track of data.music ?? []) await client.query('INSERT INTO music_tracks (id, user_id, title, artist, album, listened) VALUES ($1,$2,$3,$4,$5,$6)', [track.id, 'local', track.title, track.artist, track.album, track.listened])
+    for (const memory of data.memories ?? []) await client.query('INSERT INTO memory_entries (id, user_id, title, body, occurred_on) VALUES ($1,$2,$3,$4,$5)', [memory.id, 'local', memory.title, memory.body, memory.occurredOn])
     await client.query('COMMIT')
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }

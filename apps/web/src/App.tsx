@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
-import { CalendarDays, CheckSquare, ChevronRight, CircleUserRound, Download, LayoutDashboard, Plus, Settings, Sparkles, Trash2 } from 'lucide-react'
+import { CalendarDays, CheckSquare, ChevronRight, CircleUserRound, Download, LayoutDashboard, Plus, Settings, Sparkles, Target, Trash2, WalletCards } from 'lucide-react'
 import './module.css'
 
 type Task = { id: string; summary: string; notes: string; completed: boolean; createdAt: string }
 type EventItem = { id: string; title: string; date: string; notes: string }
 type Idea = { id: string; title: string; body: string; createdAt: string }
+type Account = { id: string; name: string; kind: string; currency: string; openingBalanceMinor: number; balanceMinor: number }
+type Transaction = { id: string; accountId: string; description: string; amountMinor: number; date: string; category: string }
+type Goal = { id: string; title: string; targetMinor: number | null; currentMinor: number; dueDate: string | null; completed: boolean }
+type Movie = { id: string; title: string; year: number | null; watched: boolean; rating: number | null; notes: string }
+type MusicTrack = { id: string; title: string; artist: string; album: string; listened: boolean }
+type Memory = { id: string; title: string; body: string; occurredOn: string | null }
 type User = { email: string; name: string }
 type Preferences = { theme: 'dark' | 'light'; accent: string; timezone: string; weekStart: 'sunday' | 'monday'; modules: { calendar: boolean; tasks: boolean; ideas: boolean }; widgets: { tasks: boolean; calendar: boolean; ideas: boolean } }
 const API = import.meta.env.VITE_API_URL || ''
@@ -23,7 +29,7 @@ function App() {
   const [summary, setSummary] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [view, setView] = useState<'dashboard' | 'calendar' | 'tasks' | 'ideas' | 'settings'>('dashboard')
+  const [view, setView] = useState<'dashboard' | 'calendar' | 'tasks' | 'ideas' | 'finance' | 'goals' | 'movies' | 'music' | 'memories' | 'settings'>('dashboard')
   const [events, setEvents] = useState<EventItem[]>([])
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [eventTitle, setEventTitle] = useState('')
@@ -33,6 +39,28 @@ function App() {
   const [preferences, setPreferences] = useState<Preferences | null>(null)
   const [preferencesSaving, setPreferencesSaving] = useState(false)
   const [restoreStatus, setRestoreStatus] = useState('')
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [accountName, setAccountName] = useState('')
+  const [accountBalance, setAccountBalance] = useState('0')
+  const [transactionAccount, setTransactionAccount] = useState('')
+  const [transactionDescription, setTransactionDescription] = useState('')
+  const [transactionAmount, setTransactionAmount] = useState('')
+  const [goalTitle, setGoalTitle] = useState('')
+  const [goalTarget, setGoalTarget] = useState('')
+  const [goalDueDate, setGoalDueDate] = useState('')
+  const [movies, setMovies] = useState<Movie[]>([])
+  const [music, setMusic] = useState<MusicTrack[]>([])
+  const [memories, setMemories] = useState<Memory[]>([])
+  const [movieTitle, setMovieTitle] = useState('')
+  const [movieYear, setMovieYear] = useState('')
+  const [musicTitle, setMusicTitle] = useState('')
+  const [musicArtist, setMusicArtist] = useState('')
+  const [musicAlbum, setMusicAlbum] = useState('')
+  const [memoryTitle, setMemoryTitle] = useState('')
+  const [memoryBody, setMemoryBody] = useState('')
+  const [memoryDate, setMemoryDate] = useState('')
 
   useEffect(() => {
     void apiFetch('/api/auth/me').then(response => response.json()).then(data => setUser(data.user)).finally(() => setAuthChecked(true))
@@ -41,16 +69,23 @@ function App() {
   async function loadTasks() {
     setLoading(true)
     const response = await apiFetch('/api/tasks')
-    setTasks(await response.json())
+    if (response.ok) setTasks(await response.json())
+    else setTasks([])
     setLoading(false)
   }
 
   useEffect(() => {
+    if (!user) { setTasks([]); setLoading(false); return }
     void loadTasks()
-    if (!user) return
     void apiFetch('/api/preferences').then(response => response.json()).then(setPreferences)
     void apiFetch('/api/events').then(response => response.json()).then(setEvents)
     void apiFetch('/api/ideas').then(response => response.json()).then(setIdeas)
+    void apiFetch('/api/finance/accounts').then(response => response.ok ? response.json() : []).then(setAccounts)
+    void apiFetch('/api/finance/transactions').then(response => response.ok ? response.json() : []).then(setTransactions)
+    void apiFetch('/api/goals').then(response => response.ok ? response.json() : []).then(setGoals)
+    void apiFetch('/api/movies').then(response => response.ok ? response.json() : []).then(setMovies)
+    void apiFetch('/api/music').then(response => response.ok ? response.json() : []).then(setMusic)
+    void apiFetch('/api/memories').then(response => response.ok ? response.json() : []).then(setMemories)
   }, [user])
 
   async function savePreferences(next: Preferences) {
@@ -76,10 +111,15 @@ function App() {
     event.target.value = ''
   }
 
-  async function submitAuth(event: React.FormEvent) {
+  async function submitAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setAuthSaving(true); setAuthError('')
-    const response = await apiFetch(`/api/auth/${authMode}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: authEmail, name: authName, password: authPassword }) })
+    const form = new FormData(event.currentTarget)
+    const email = String(form.get('email') ?? authEmail)
+    const name = String(form.get('name') ?? authName)
+    const password = String(form.get('password') ?? authPassword)
+    const credentials = authMode === 'register' ? { email, name, password } : { email, password }
+    const response = await apiFetch(`/api/auth/${authMode}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(credentials) })
     const data = await response.json()
     if (!response.ok) setAuthError(data.error ?? 'Unable to continue.')
     else setUser(data.user ?? data)
@@ -98,7 +138,7 @@ function App() {
   }
 
   if (!authChecked) return <div className="auth-screen"><div className="auth-card"><Sparkles size={24} /><p>Loading your workspace...</p></div></div>
-  if (!user) return <div className="auth-screen"><form className="auth-card" onSubmit={submitAuth}><div className="brand"><Sparkles size={20} /><strong>Personal CRM</strong></div><h1>{authMode === 'login' ? 'Welcome back' : 'Create your workspace'}</h1><p className="muted">Keep your personal life organized in one calm place.</p>{authMode === 'register' && <input value={authName} onChange={event => setAuthName(event.target.value)} placeholder="Your name" required />}{<input type="email" value={authEmail} onChange={event => setAuthEmail(event.target.value)} placeholder="Email address" required />}<input type="password" value={authPassword} onChange={event => setAuthPassword(event.target.value)} placeholder="Password (8+ characters)" minLength={8} required />{authError && <p className="auth-error">{authError}</p>}<button className="auth-submit" disabled={authSaving}>{authSaving ? 'Working...' : authMode === 'login' ? 'Sign in' : 'Create workspace'}</button><button type="button" className="auth-switch" onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError('') }}>{authMode === 'login' ? 'Need a workspace? Create one' : 'Already have a workspace? Sign in'}</button></form></div>
+  if (!user) return <div className="auth-screen"><form className="auth-card" onSubmit={submitAuth}><div className="brand"><Sparkles size={20} /><strong>Personal CRM</strong></div><h1>{authMode === 'login' ? 'Welcome back' : 'Create your workspace'}</h1><p className="muted">Keep your personal life organized in one calm place.</p>{authMode === 'register' && <input name="name" value={authName} onChange={event => setAuthName(event.target.value)} placeholder="Your name" required />}{<input name="email" type="email" value={authEmail} onChange={event => setAuthEmail(event.target.value)} placeholder="Email address" required />}<input name="password" type="password" value={authPassword} onChange={event => setAuthPassword(event.target.value)} placeholder="Password (8+ characters)" minLength={8} required />{authError && <p className="auth-error">{authError}</p>}<button className="auth-submit" disabled={authSaving}>{authSaving ? 'Working...' : authMode === 'login' ? 'Sign in' : 'Create workspace'}</button><button type="button" className="auth-switch" onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError('') }}>{authMode === 'login' ? 'Need a workspace? Create one' : 'Already have a workspace? Sign in'}</button></form></div>
 
   async function createEvent(event: React.FormEvent) {
     event.preventDefault()
@@ -136,6 +176,51 @@ function App() {
     await loadTasks()
   }
 
+  async function createAccount(event: React.FormEvent) {
+    event.preventDefault()
+    if (!accountName.trim()) return
+    const response = await apiFetch('/api/finance/accounts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: accountName, kind: 'cash', currency: 'USD', openingBalanceMinor: Math.round(Number(accountBalance || 0) * 100) }) })
+    if (response.ok) { const created = await response.json() as Account; setAccounts(current => [created, ...current]); setAccountName(''); setAccountBalance('0') }
+  }
+
+  async function createTransaction(event: React.FormEvent) {
+    event.preventDefault()
+    if (!transactionAccount || !transactionDescription.trim() || !transactionAmount) return
+    const response = await apiFetch('/api/finance/transactions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accountId: transactionAccount, description: transactionDescription, amountMinor: Math.round(Number(transactionAmount) * 100), date: new Date().toISOString().slice(0, 10), category: 'General' }) })
+    if (response.ok) { const created = await response.json() as Transaction; setTransactions(current => [created, ...current]); setTransactionDescription(''); setTransactionAmount('') }
+  }
+
+  async function createGoal(event: React.FormEvent) {
+    event.preventDefault()
+    if (!goalTitle.trim()) return
+    const response = await apiFetch('/api/goals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: goalTitle, targetMinor: goalTarget ? Math.round(Number(goalTarget) * 100) : null, dueDate: goalDueDate || null }) })
+    if (response.ok) { const created = await response.json() as Goal; setGoals(current => [created, ...current]); setGoalTitle(''); setGoalTarget(''); setGoalDueDate('') }
+  }
+
+  async function toggleGoal(id: string) {
+    const response = await apiFetch(`/api/goals/${id}/toggle`, { method: 'PATCH' })
+    if (response.ok) { const updated = await response.json() as Goal; setGoals(current => current.map(goal => goal.id === id ? updated : goal)) }
+  }
+
+  async function createMovie(event: React.FormEvent) {
+    event.preventDefault()
+    if (!movieTitle.trim()) return
+    const response = await apiFetch('/api/movies', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: movieTitle, year: movieYear ? Number(movieYear) : null, notes: '' }) })
+    if (response.ok) { const created = await response.json() as Movie; setMovies(current => [created, ...current]); setMovieTitle(''); setMovieYear('') }
+  }
+  async function createMusic(event: React.FormEvent) {
+    event.preventDefault()
+    if (!musicTitle.trim()) return
+    const response = await apiFetch('/api/music', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: musicTitle, artist: musicArtist, album: musicAlbum }) })
+    if (response.ok) { const created = await response.json() as MusicTrack; setMusic(current => [created, ...current]); setMusicTitle(''); setMusicArtist(''); setMusicAlbum('') }
+  }
+  async function createMemory(event: React.FormEvent) {
+    event.preventDefault()
+    if (!memoryTitle.trim()) return
+    const response = await apiFetch('/api/memories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: memoryTitle, body: memoryBody, occurredOn: memoryDate || null }) })
+    if (response.ok) { const created = await response.json() as Memory; setMemories(current => [created, ...current]); setMemoryTitle(''); setMemoryBody(''); setMemoryDate('') }
+  }
+
   return <div className="app-shell" data-theme={preferences?.theme ?? 'dark'} style={{ '--accent': preferences?.accent ?? '#c9f253' } as React.CSSProperties}>
     <aside className="sidebar">
       <div className="brand"><Sparkles size={18} /> <strong>Personal CRM</strong></div>
@@ -143,7 +228,9 @@ function App() {
       <nav>
         <a className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}><LayoutDashboard size={16} /> Dashboard</a>
         <p>PRODUCTIVITY</p>{(!preferences || preferences.modules.calendar) && <a className={view === 'calendar' ? 'active' : ''} onClick={() => setView('calendar')}><CalendarDays size={16} /> Calendar</a>}{(!preferences || preferences.modules.tasks) && <a className={view === 'tasks' ? 'active' : ''} onClick={() => setView('tasks')}><CheckSquare size={16} /> Tasks</a>}{(!preferences || preferences.modules.ideas) && <a className={view === 'ideas' ? 'active' : ''} onClick={() => setView('ideas')}><Sparkles size={16} /> Ideas</a>}
-        <p>LIFE</p><a><CircleUserRound size={16} /> Goals</a><a className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Settings size={16} /> Settings</a>
+        <p>FINANCE</p><a className={view === 'finance' ? 'active' : ''} onClick={() => setView('finance')}><WalletCards size={16} /> Wallet</a>
+        <p>LIFE</p><a className={view === 'goals' ? 'active' : ''} onClick={() => setView('goals')}><Target size={16} /> Goals</a><a className={view === 'memories' ? 'active' : ''} onClick={() => setView('memories')}><CircleUserRound size={16} /> Memories</a>
+        <p>MEDIA</p><a className={view === 'movies' ? 'active' : ''} onClick={() => setView('movies')}><CalendarDays size={16} /> Movies</a><a className={view === 'music' ? 'active' : ''} onClick={() => setView('music')}><Sparkles size={16} /> Music</a><a className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Settings size={16} /> Settings</a>
       </nav>
       <button className="account" onClick={() => void signOut}><CircleUserRound size={18} /><span><b>{user.name}</b><small>Sign out</small></span></button>
     </aside>
@@ -153,7 +240,12 @@ function App() {
       {view === 'settings' && preferences && <section className="module-workspace panel settings-workspace"><div className="panel-header"><div><span className="panel-kicker"><Settings size={15} /> WORKSPACE</span><h2>Preferences</h2></div></div><div className="settings-grid"><label>Theme<select value={preferences.theme} onChange={event => void savePreferences({ ...preferences, theme: event.target.value as Preferences['theme'] })}><option value="dark">Dark</option><option value="light">Light</option></select></label><label>Accent color<input type="color" value={preferences.accent} onChange={event => void savePreferences({ ...preferences, accent: event.target.value })} /></label><label>Timezone<select value={preferences.timezone} onChange={event => void savePreferences({ ...preferences, timezone: event.target.value })}><option>America/New_York</option><option>America/Chicago</option><option>America/Denver</option><option>America/Los_Angeles</option><option>UTC</option></select></label><label>Week starts<select value={preferences.weekStart} onChange={event => void savePreferences({ ...preferences, weekStart: event.target.value as Preferences['weekStart'] })}><option value="sunday">Sunday</option><option value="monday">Monday</option></select></label></div><h3>Enabled modules</h3><div className="toggle-list">{(['calendar', 'tasks', 'ideas'] as const).map(module => <label key={module}><input type="checkbox" checked={preferences.modules[module]} onChange={event => void savePreferences({ ...preferences, modules: { ...preferences.modules, [module]: event.target.checked } })} /> {module[0].toUpperCase() + module.slice(1)}</label>)}</div><h3>Dashboard widgets</h3><div className="toggle-list">{(['tasks', 'calendar', 'ideas'] as const).map(widget => <label key={widget}><input type="checkbox" checked={preferences.widgets[widget]} onChange={event => void savePreferences({ ...preferences, widgets: { ...preferences.widgets, [widget]: event.target.checked } })} /> {widget[0].toUpperCase() + widget.slice(1)}</label>)}</div><h3>Backup and restore</h3><label className="restore-control">Choose a Personal CRM JSON export<input type="file" accept="application/json,.json" onChange={event => void restoreBackup(event)} /></label>{preferencesSaving && <p className="muted">Saving preferences...</p>}{restoreStatus && <p className="restore-status">{restoreStatus}</p>}</section>}
       {view === 'calendar' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CalendarDays size={15} /> UPCOMING</span><h2>Calendar events</h2></div></div><form className="module-form" onSubmit={createEvent}><input value={eventTitle} onChange={event => setEventTitle(event.target.value)} placeholder="Event title" /><input type="date" value={eventDate} onChange={event => setEventDate(event.target.value)} /><button type="submit"><Plus size={17} /> Add event</button></form>{events.length === 0 ? <div className="empty compact"><CalendarDays size={28} /><p>No events yet</p></div> : <ul className="simple-list">{events.map(item => <li key={item.id}><b>{item.title}</b><span>{item.date}</span></li>)}</ul>}</section>}
       {view === 'ideas' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><Sparkles size={15} /> CAPTURE</span><h2>Idea box</h2></div></div><form className="module-form stacked" onSubmit={createIdea}><input value={ideaTitle} onChange={event => setIdeaTitle(event.target.value)} placeholder="Idea title" /><textarea value={ideaBody} onChange={event => setIdeaBody(event.target.value)} placeholder="Capture the thought..." /><button type="submit"><Plus size={17} /> Save idea</button></form>{ideas.length === 0 ? <div className="empty compact"><Sparkles size={28} /><p>No ideas yet</p></div> : <ul className="simple-list">{ideas.map(item => <li key={item.id}><b>{item.title}</b><span>{item.body}</span></li>)}</ul>}</section>}
-      {view !== 'settings' && <section className="dashboard-grid">
+      {view === 'finance' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><WalletCards size={15} /> FINANCE</span><h2>Wallet</h2></div></div><form className="module-form" onSubmit={createAccount}><input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="Account name" /><input type="number" step="0.01" value={accountBalance} onChange={event => setAccountBalance(event.target.value)} placeholder="Opening balance" /><button type="submit"><Plus size={17} /> Add account</button></form>{accounts.length === 0 ? <div className="empty compact"><WalletCards size={28} /><p>No accounts yet</p></div> : <ul className="simple-list">{accounts.map(account => <li key={account.id}><b>{account.name}</b><span>{account.currency} {(account.balanceMinor / 100).toFixed(2)}</span></li>)}</ul>}<h3>Record transaction</h3><form className="module-form" onSubmit={createTransaction}><select value={transactionAccount} onChange={event => setTransactionAccount(event.target.value)}><option value="">Choose account</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input value={transactionDescription} onChange={event => setTransactionDescription(event.target.value)} placeholder="Description" /><input type="number" step="0.01" value={transactionAmount} onChange={event => setTransactionAmount(event.target.value)} placeholder="Amount (+ income, - expense)" /><button type="submit"><Plus size={17} /> Record</button></form>{transactions.length > 0 && <ul className="simple-list">{transactions.slice(0, 8).map(transaction => <li key={transaction.id}><b>{transaction.description}</b><span>{(transaction.amountMinor / 100).toFixed(2)} · {transaction.date}</span></li>)}</ul>}</section>}
+      {view === 'goals' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><Target size={15} /> PROGRESS</span><h2>Goals</h2></div></div><form className="module-form" onSubmit={createGoal}><input value={goalTitle} onChange={event => setGoalTitle(event.target.value)} placeholder="Goal title" /><input type="number" step="0.01" value={goalTarget} onChange={event => setGoalTarget(event.target.value)} placeholder="Target amount (optional)" /><input type="date" value={goalDueDate} onChange={event => setGoalDueDate(event.target.value)} /><button type="submit"><Plus size={17} /> Add goal</button></form>{goals.length === 0 ? <div className="empty compact"><Target size={28} /><p>No goals yet</p></div> : <ul className="task-list">{goals.map(goal => <li key={goal.id}><button className={`check ${goal.completed ? 'done' : ''}`} onClick={() => void toggleGoal(goal.id)} title="Toggle goal"><Target size={17} /></button><span className={goal.completed ? 'completed' : ''}>{goal.title}{goal.dueDate ? ` · due ${goal.dueDate}` : ''}</span></li>)}</ul>}</section>}
+      {view === 'movies' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CalendarDays size={15} /> MEDIA</span><h2>Movie library</h2></div></div><form className="module-form" onSubmit={createMovie}><input value={movieTitle} onChange={event => setMovieTitle(event.target.value)} placeholder="Movie title" /><input type="number" value={movieYear} onChange={event => setMovieYear(event.target.value)} placeholder="Release year" /><button type="submit"><Plus size={17} /> Add movie</button></form>{movies.length === 0 ? <div className="empty compact"><CalendarDays size={28} /><p>No movies yet</p></div> : <ul className="simple-list">{movies.map(movie => <li key={movie.id}><b>{movie.title}</b><span>{movie.year ?? 'Year unknown'}</span></li>)}</ul>}</section>}
+      {view === 'music' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><Sparkles size={15} /> MEDIA</span><h2>Music library</h2></div></div><form className="module-form" onSubmit={createMusic}><input value={musicTitle} onChange={event => setMusicTitle(event.target.value)} placeholder="Track title" /><input value={musicArtist} onChange={event => setMusicArtist(event.target.value)} placeholder="Artist" /><input value={musicAlbum} onChange={event => setMusicAlbum(event.target.value)} placeholder="Album" /><button type="submit"><Plus size={17} /> Add track</button></form>{music.length === 0 ? <div className="empty compact"><Sparkles size={28} /><p>No music yet</p></div> : <ul className="simple-list">{music.map(track => <li key={track.id}><b>{track.title}</b><span>{track.artist}{track.album ? ` · ${track.album}` : ''}</span></li>)}</ul>}</section>}
+      {view === 'memories' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CircleUserRound size={15} /> LIFE</span><h2>Memory vault</h2></div></div><form className="module-form stacked" onSubmit={createMemory}><input value={memoryTitle} onChange={event => setMemoryTitle(event.target.value)} placeholder="Memory title" /><input type="date" value={memoryDate} onChange={event => setMemoryDate(event.target.value)} /><textarea value={memoryBody} onChange={event => setMemoryBody(event.target.value)} placeholder="Write down the moment..." /><button type="submit"><Plus size={17} /> Save memory</button></form>{memories.length === 0 ? <div className="empty compact"><CircleUserRound size={28} /><p>No memories yet</p></div> : <ul className="simple-list">{memories.map(memory => <li key={memory.id}><b>{memory.title}</b><span>{memory.occurredOn ?? 'Undated'} · {memory.body}</span></li>)}</ul>}</section>}
+      {view === 'dashboard' && <section className="dashboard-grid">
         {(!preferences || preferences.widgets.tasks) && <article className="panel tasks-panel"><div className="panel-header"><div><span className="panel-kicker"><CheckSquare size={15} /> PRODUCTIVITY</span><h2>To-Do List</h2></div><span className="count">{tasks.length}</span></div>
           <form className="quick-add" onSubmit={createTask}><input value={summary} onChange={event => setSummary(event.target.value)} placeholder="What needs doing?" /><button disabled={saving} title="Create task"><Plus size={18} /></button></form>
           {loading ? <p className="muted">Loading tasks...</p> : tasks.length === 0 ? <div className="empty"><CheckSquare size={30} /><p>No tasks yet</p><small>Add your first task above.</small></div> : <ul className="task-list">{tasks.map(task => <li key={task.id}><button className={`check ${task.completed ? 'done' : ''}`} onClick={() => void toggleTask(task.id)} title="Toggle task"><CheckSquare size={17} /></button><span className={task.completed ? 'completed' : ''}>{task.summary}</span><button className="delete" onClick={() => void deleteTask(task.id)} title="Delete task"><Trash2 size={15} /></button></li>)}</ul>}

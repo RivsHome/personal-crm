@@ -1,6 +1,6 @@
 # React Life Management App Plan
 
-Status: implementation in progress. The React/API foundation, authenticated shell, Tasks, Calendar, Ideas, preferences, module/widget controls, export/restore, and Docker deployment configuration are implemented and container-smoke-tested in this workspace. Finance, media, memories, advanced drag-and-drop dashboard editing, and production VPS rollout remain follow-up work.
+Status: implementation in progress. The React/API foundation, authenticated shell, Tasks, Calendar, Ideas, Finance, Goals, Movies, Music, Memories, preferences, module/widget controls, export/restore, and Docker deployment configuration are implemented and container-smoke-tested in this workspace. Attachments, advanced drag-and-drop dashboard editing, stronger production security, and production VPS rollout remain follow-up work.
 
 ## Current Implementation Checkpoint
 
@@ -8,9 +8,12 @@ Status: implementation in progress. The React/API foundation, authenticated shel
 - Persistence: PostgreSQL schema initialization for production, with JSON fallback for local development when PostgreSQL is unavailable.
 - Authentication: single-owner registration/login/logout with HTTP-only sessions and persistent local development credentials.
 - Working modules: dashboard shell, Tasks, Calendar, Ideas, and JSON export.
+- Working modules: dashboard shell, Tasks, Calendar, Ideas, Wallet accounts/transactions, Goals, Movies, Music, Memories, and JSON export.
 - MVP controls: durable preferences, light/dark theme, accent color, timezone, module enable/disable, widget visibility, and validated JSON restore.
 - Deployment assets: API and web Dockerfiles, Nginx API proxy, Docker Compose PostgreSQL volume, API data volume, health endpoint, and readiness endpoint.
 - Verification: type checking, API tests, production builds, live authentication, authenticated export/restore smoke tests, Compose image builds, healthy PostgreSQL/API/web containers, Nginx routing, and post-API-restart persistence all pass locally.
+- Latest verification: authenticated browser smoke covers login, Wallet account/transaction creation, and Goal creation.
+- Latest verification: authenticated browser smoke covers Movies, Music, and Memories creation.
 
 ## 1. Objective
 
