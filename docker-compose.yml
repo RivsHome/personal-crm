@@ -1,5 +1,6 @@
 services:
   api:
+    container_name: personal-crm-api
     restart: unless-stopped
     build:
       context: .
@@ -21,10 +22,6 @@ services:
       retries: 12
     volumes:
       - personal_crm_api_data:/app/data
-    networks:
-      default:
-        aliases:
-          - personal-crm-api
 
   web:
     restart: unless-stopped
