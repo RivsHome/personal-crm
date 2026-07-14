@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
-import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listIdeas, listMemories, listMovies, listMusic, listTasks, restoreData, toggleGoal, toggleTask, updatePreferences } from './db.js'
+import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listIdeas, listMemories, listMovies, listMusic, listTasks, restoreData, toggleGoal, toggleTask, updateEvent, updatePreferences, updateTask } from './db.js'
 import { changePassword, current, initializeAuth, login, logout, register } from './auth.js'
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
@@ -41,9 +41,13 @@ app.addHook('preHandler', async (request, reply) => {
 const taskInput = z.object({
   summary: z.string().trim().min(1).max(240),
   notes: z.string().max(5000).default(''),
-  parentId: z.string().uuid().nullable().optional().default(null)
+  parentId: z.string().uuid().nullable().optional().default(null),
+  dueDate: z.string().date().nullable().optional().default(null),
+  priority: z.enum(['low', 'normal', 'high']).optional().default('normal'),
+  tags: z.array(z.string().trim().min(1).max(40)).max(12).optional().default([]),
+  listName: z.string().trim().min(1).max(80).optional().default('Inbox')
 })
-const eventInput = z.object({ title: z.string().trim().min(1).max(240), date: z.string().date(), notes: z.string().max(5000).default('') })
+const eventInput = z.object({ title: z.string().trim().min(1).max(240), date: z.string().date(), notes: z.string().max(5000).default(''), category: z.string().trim().min(1).max(80).optional().default('General') })
 const ideaInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default('') })
 const accountInput = z.object({ name: z.string().trim().min(1).max(120), kind: z.string().trim().min(1).max(40), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int().safe() })
 const transactionInput = z.object({ accountId: z.string().uuid(), description: z.string().trim().min(1).max(240), amountMinor: z.number().int().safe(), date: z.string().date(), category: z.string().trim().min(1).max(80) })
@@ -55,8 +59,8 @@ const loginCredentials = z.object({ email: z.string().email(), password: z.strin
 const registrationCredentials = loginCredentials.extend({ name: z.string().trim().min(1).max(80) })
 const preferencesInput = z.object({ theme: z.enum(['dark', 'light']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), timezone: z.string().min(1).max(80).optional(), weekStart: z.enum(['sunday', 'monday']).optional(), modules: z.object({ calendar: z.boolean().optional(), tasks: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), widgets: z.object({ tasks: z.boolean().optional(), calendar: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), dashboardOrder: z.array(z.enum(['tasks', 'calendar', 'ideas'])).length(3).optional() })
 const restoreInput = z.object({
-  tasks: z.array(z.object({ id: z.string().uuid(), parentId: z.string().uuid().nullable().optional().default(null), summary: z.string().min(1).max(240), notes: z.string(), completed: z.boolean(), createdAt: z.string().datetime() })),
-  events: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), date: z.string().date(), notes: z.string() })),
+  tasks: z.array(z.object({ id: z.string().uuid(), parentId: z.string().uuid().nullable().optional().default(null), summary: z.string().min(1).max(240), notes: z.string(), dueDate: z.string().date().nullable().optional().default(null), priority: z.enum(['low', 'normal', 'high']).optional().default('normal'), tags: z.array(z.string().min(1).max(40)).optional().default([]), listName: z.string().min(1).max(80).optional().default('Inbox'), completed: z.boolean(), createdAt: z.string().datetime() })),
+  events: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), date: z.string().date(), notes: z.string(), category: z.string().min(1).max(80).optional().default('General') })),
   ideas: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), createdAt: z.string().datetime() })),
   financialAccounts: z.array(z.object({ id: z.string().uuid(), name: z.string().min(1).max(120), kind: z.string(), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int() })).optional().default([]),
   financialTransactions: z.array(z.object({ id: z.string().uuid(), accountId: z.string().uuid(), description: z.string().min(1).max(240), amountMinor: z.number().int(), date: z.string().date(), category: z.string().min(1).max(80) })).optional().default([]),
@@ -140,9 +144,17 @@ app.post('/api/tasks', async (request, reply) => {
     return reply.code(400).send({ error: 'Invalid task', issues: parsed.error.issues })
   }
 
-  const created = await createTask(parsed.data.summary, parsed.data.notes, parsed.data.parentId)
+  const created = await createTask(parsed.data, parsed.data.parentId)
   if (!created) return reply.code(404).send({ error: 'Parent task not found' })
   return reply.code(201).send(created)
+})
+
+app.put('/api/tasks/:id', async (request, reply) => {
+  const parsed = taskInput.omit({ parentId: true }).safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid task', issues: parsed.error.issues })
+  const task = await updateTask((request.params as { id: string }).id, parsed.data)
+  if (!task) return reply.code(404).send({ error: 'Task not found' })
+  return task
 })
 
 app.patch('/api/tasks/:id/toggle', async (request, reply) => {
@@ -160,7 +172,18 @@ app.get('/api/events', async () => listEvents())
 app.post('/api/events', async (request, reply) => {
   const parsed = eventInput.safeParse(request.body)
   if (!parsed.success) return reply.code(400).send({ error: 'Invalid event', issues: parsed.error.issues })
-  return reply.code(201).send(await createEvent(parsed.data.title, parsed.data.date, parsed.data.notes))
+  return reply.code(201).send(await createEvent(parsed.data.title, parsed.data.date, parsed.data.notes, parsed.data.category))
+})
+app.put('/api/events/:id', async (request, reply) => {
+  const parsed = eventInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid event', issues: parsed.error.issues })
+  const event = await updateEvent((request.params as { id: string }).id, parsed.data.title, parsed.data.date, parsed.data.notes, parsed.data.category)
+  if (!event) return reply.code(404).send({ error: 'Event not found' })
+  return event
+})
+app.delete('/api/events/:id', async (request, reply) => {
+  if (!await deleteEvent((request.params as { id: string }).id)) return reply.code(404).send({ error: 'Event not found' })
+  return reply.code(204).send()
 })
 
 app.get('/api/ideas', async () => listIdeas())

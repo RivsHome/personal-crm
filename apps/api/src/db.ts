@@ -13,11 +13,15 @@ export type TaskRecord = {
   parentId: string | null
   summary: string
   notes: string
+  dueDate: string | null
+  priority: 'low' | 'normal' | 'high'
+  tags: string[]
+  listName: string
   completed: boolean
   createdAt: string
 }
 
-export type EventRecord = { id: string; title: string; date: string; notes: string }
+export type EventRecord = { id: string; title: string; date: string; notes: string; category: string }
 export type IdeaRecord = { id: string; title: string; body: string; createdAt: string }
 export type FinancialAccount = { id: string; name: string; kind: string; currency: string; openingBalanceMinor: number; balanceMinor: number }
 export type FinancialTransaction = { id: string; accountId: string; description: string; amountMinor: number; date: string; category: string }
@@ -46,6 +50,20 @@ let localPreferences: Preferences = {
   modules: { calendar: true, tasks: true, ideas: true }, widgets: { tasks: true, calendar: true, ideas: true }, dashboardOrder: ['tasks', 'calendar', 'ideas']
 }
 let postgresAvailable = false
+
+function dateOnly(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (value instanceof Date) return value.toISOString().slice(0, 10)
+  return String(value).slice(0, 10)
+}
+
+function normalizeEvent(row: Record<string, unknown>): EventRecord {
+  return { ...row, date: dateOnly(row.date) ?? '', category: String(row.category ?? 'General') } as EventRecord
+}
+
+function normalizeTask(row: Record<string, unknown>): TaskRecord {
+  return { ...row, dueDate: dateOnly(row.dueDate), tags: Array.isArray(row.tags) ? row.tags.map(String) : [] } as TaskRecord
+}
 
 export function databaseReady() { return postgresAvailable }
 
@@ -89,15 +107,36 @@ export async function initializeDatabase() {
 
 export async function listEvents() {
   if (!postgresAvailable) return localEvents
-  const result = await pool.query('SELECT id, title, event_date AS date, notes FROM calendar_events WHERE user_id = $1 ORDER BY event_date ASC', ['local'])
-  return result.rows as EventRecord[]
+  const result = await pool.query('SELECT id, title, event_date AS date, notes, category FROM calendar_events WHERE user_id = $1 ORDER BY event_date ASC', ['local'])
+  return result.rows.map(normalizeEvent)
 }
 
-export async function createEvent(title: string, date: string, notes: string) {
-  const event = { id: crypto.randomUUID(), title, date, notes }
+export async function createEvent(title: string, date: string, notes: string, category: string) {
+  const event = { id: crypto.randomUUID(), title, date, notes, category }
   if (!postgresAvailable) { localEvents.push(event); await saveCollection('events.json', localEvents); return event }
-  const result = await pool.query('INSERT INTO calendar_events (id, title, event_date, notes) VALUES ($1, $2, $3, $4) RETURNING id, title, event_date AS date, notes', [event.id, title, date, notes])
-  return result.rows[0] as EventRecord
+  const result = await pool.query('INSERT INTO calendar_events (id, title, event_date, notes, category) VALUES ($1, $2, $3, $4, $5) RETURNING id, title, event_date AS date, notes, category', [event.id, title, date, notes, category])
+  return normalizeEvent(result.rows[0])
+}
+
+export async function updateEvent(id: string, title: string, date: string, notes: string, category: string) {
+  if (!postgresAvailable) {
+    const event = localEvents.find(item => item.id === id)
+    if (event) { Object.assign(event, { title, date, notes, category }); await saveCollection('events.json', localEvents) }
+    return event
+  }
+  const result = await pool.query('UPDATE calendar_events SET title = $2, event_date = $3, notes = $4, category = $5 WHERE id = $1 AND user_id = $6 RETURNING id, title, event_date AS date, notes, category', [id, title, date, notes, category, 'local'])
+  return result.rows[0] ? normalizeEvent(result.rows[0]) : undefined
+}
+
+export async function deleteEvent(id: string) {
+  if (!postgresAvailable) {
+    const count = localEvents.length
+    localEvents = localEvents.filter(item => item.id !== id)
+    if (localEvents.length !== count) await saveCollection('events.json', localEvents)
+    return localEvents.length !== count
+  }
+  const result = await pool.query('DELETE FROM calendar_events WHERE id = $1 AND user_id = $2', [id, 'local'])
+  return Boolean(result.rowCount)
 }
 
 export async function getPreferences(): Promise<Preferences> {
@@ -234,19 +273,31 @@ export async function deleteAttachment(id: string) {
 
 export async function listTasks() {
   if (!postgresAvailable) return localTasks
-  const result = await pool.query('SELECT id, parent_id AS "parentId", summary, notes, completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY created_at DESC', ['local'])
-  return result.rows as TaskRecord[]
+  const result = await pool.query('SELECT id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY completed ASC, due_date ASC NULLS LAST, created_at DESC', ['local'])
+  return result.rows.map(normalizeTask)
 }
 
-export async function createTask(summary: string, notes: string, parentId: string | null = null) {
-  const task = { id: crypto.randomUUID(), parentId, summary, notes, completed: false, createdAt: new Date().toISOString() }
+export type TaskInput = Pick<TaskRecord, 'summary' | 'notes' | 'dueDate' | 'priority' | 'tags' | 'listName'>
+
+export async function createTask(input: TaskInput, parentId: string | null = null) {
+  const task = { id: crypto.randomUUID(), parentId, ...input, completed: false, createdAt: new Date().toISOString() }
   if (!postgresAvailable) {
     if (parentId && !localTasks.some(item => item.id === parentId)) return null
     localTasks.unshift(task); await saveLocalTasks(); return task
   }
-  const result = await pool.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes) SELECT $1, $2, $3::uuid, $4, $5 WHERE $3::uuid IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id = $3::uuid AND user_id = $2) RETURNING id, parent_id AS "parentId", summary, notes, completed, created_at AS "createdAt"', [task.id, 'local', parentId, summary, notes])
+  const result = await pool.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, due_date, priority, tags, list_name) SELECT $1, $2, $3::uuid, $4, $5, $6, $7, $8::jsonb, $9 WHERE $3::uuid IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id = $3::uuid AND user_id = $2) RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt"', [task.id, 'local', parentId, input.summary, input.notes, input.dueDate, input.priority, JSON.stringify(input.tags), input.listName])
   if (!result.rowCount) return null
-  return result.rows[0] as TaskRecord
+  return normalizeTask(result.rows[0])
+}
+
+export async function updateTask(id: string, input: TaskInput) {
+  if (!postgresAvailable) {
+    const task = localTasks.find(item => item.id === id)
+    if (task) { Object.assign(task, input); await saveLocalTasks() }
+    return task
+  }
+  const result = await pool.query('UPDATE tasks SET summary = $2, notes = $3, due_date = $4, priority = $5, tags = $6::jsonb, list_name = $7, updated_at = NOW() WHERE id = $1 AND user_id = $8 RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt"', [id, input.summary, input.notes, input.dueDate, input.priority, JSON.stringify(input.tags), input.listName, 'local'])
+  return result.rows[0] ? normalizeTask(result.rows[0]) : undefined
 }
 
 export async function toggleTask(id: string) {
@@ -255,8 +306,8 @@ export async function toggleTask(id: string) {
     if (task) { task.completed = !task.completed; await saveLocalTasks() }
     return task
   }
-  const result = await pool.query('UPDATE tasks SET completed = NOT completed, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, summary, notes, completed, created_at AS "createdAt"', [id, 'local'])
-  return result.rows[0] as TaskRecord | undefined
+  const result = await pool.query('UPDATE tasks SET completed = NOT completed, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt"', [id, 'local'])
+  return result.rows[0] ? normalizeTask(result.rows[0]) : undefined
 }
 
 export async function deleteTask(id: string) {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ArrowDown, ArrowUp, CalendarDays, CheckSquare, ChevronDown, ChevronRight, CircleUserRound, Download, LayoutDashboard, Plus, Settings, Sparkles, Target, Trash2, WalletCards } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarDays, CheckSquare, ChevronDown, ChevronRight, CircleUserRound, Download, LayoutDashboard, Pencil, Plus, Settings, Sparkles, Target, Trash2, WalletCards } from 'lucide-react'
 import './module.css'
 
-type Task = { id: string; parentId: string | null; summary: string; notes: string; completed: boolean; createdAt: string }
-type EventItem = { id: string; title: string; date: string; notes: string }
+type Task = { id: string; parentId: string | null; summary: string; notes: string; dueDate: string | null; priority: 'low' | 'normal' | 'high'; tags: string[]; listName: string; completed: boolean; createdAt: string }
+type EventItem = { id: string; title: string; date: string; notes: string; category: string }
 type Idea = { id: string; title: string; body: string; createdAt: string }
 type Account = { id: string; name: string; kind: string; currency: string; openingBalanceMinor: number; balanceMinor: number }
 type Transaction = { id: string; accountId: string; description: string; amountMinor: number; date: string; category: string }
@@ -12,13 +12,13 @@ type Movie = { id: string; title: string; year: number | null; watched: boolean;
 type MusicTrack = { id: string; title: string; artist: string; album: string; listened: boolean }
 type Memory = { id: string; title: string; body: string; occurredOn: string | null }
 
-function TaskTree({ tasks, onToggle, onDelete, onAddSubtask }: { tasks: Task[]; onToggle: (id: string) => void; onDelete: (id: string) => void; onAddSubtask: (id: string) => void }) {
+function TaskTree({ tasks, onToggle, onDelete, onAddSubtask, onEdit }: { tasks: Task[]; onToggle: (id: string) => void; onDelete: (id: string) => void; onAddSubtask: (id: string) => void; onEdit: (task: Task) => void }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   function toggleExpanded(id: string) { setExpanded(current => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next }) }
   function render(parentId: string | null): React.ReactNode[] {
     return tasks.filter(task => (task.parentId ?? null) === parentId).map(task => {
       const hasChildren = tasks.some(child => child.parentId === task.id)
-      return <li key={task.id} className="task-item"><div className="task-row"><button className={`check ${task.completed ? 'done' : ''}`} onClick={() => onToggle(task.id)} title="Toggle task"><CheckSquare size={17} /></button><span className={task.completed ? 'completed' : ''}>{task.summary}</span>{hasChildren && <button className="subtask" onClick={() => toggleExpanded(task.id)} title={expanded.has(task.id) ? 'Hide subtasks' : 'Show subtasks'}><ChevronDown className={expanded.has(task.id) ? 'expanded' : ''} size={16} /></button>}<button className="subtask" onClick={() => onAddSubtask(task.id)} title="Add subtask"><Plus size={15} /></button><button className="delete" onClick={() => onDelete(task.id)} title="Delete task"><Trash2 size={15} /></button></div>{hasChildren && expanded.has(task.id) && <ul className="task-list nested-tasks">{render(task.id)}</ul>}</li>
+      return <li key={task.id} className="task-item"><div className="task-row"><button className={`check ${task.completed ? 'done' : ''}`} onClick={() => onToggle(task.id)} title="Toggle task"><CheckSquare size={17} /></button><span className={task.completed ? 'completed' : ''}><b>{task.summary}</b><small className="task-meta">{task.listName} · {task.priority}{task.dueDate ? ` · due ${task.dueDate}` : ''}{task.tags.length ? ` · ${task.tags.map(tag => `#${tag}`).join(' ')}` : ''}</small></span>{hasChildren && <button className="subtask" onClick={() => toggleExpanded(task.id)} title={expanded.has(task.id) ? 'Hide subtasks' : 'Show subtasks'}><ChevronDown className={expanded.has(task.id) ? 'expanded' : ''} size={16} /></button>}<button className="subtask" onClick={() => onEdit(task)} title="Edit task"><Pencil size={15} /></button><button className="subtask" onClick={() => onAddSubtask(task.id)} title="Add subtask"><Plus size={15} /></button><button className="delete" onClick={() => onDelete(task.id)} title="Delete task"><Trash2 size={15} /></button></div>{hasChildren && expanded.has(task.id) && <ul className="task-list nested-tasks">{render(task.id)}</ul>}</li>
     })
   }
   return <ul className="task-list">{render(null)}</ul>
@@ -35,6 +35,14 @@ const apiFetch = (path: string, init?: RequestInit) => {
   return fetch(`${API}${path}`, { ...init, headers, credentials: 'include' })
 }
 
+function calendarDays(month: Date) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1)
+  const start = new Date(first); start.setDate(start.getDate() - start.getDay())
+  return Array.from({ length: 42 }, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return date })
+}
+
+function isoDate(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
+
 function App() {
   const [user, setUser] = useState<User | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -47,6 +55,13 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [summary, setSummary] = useState('')
   const [managerSummary, setManagerSummary] = useState('')
+  const [managerNotes, setManagerNotes] = useState('')
+  const [managerDueDate, setManagerDueDate] = useState('')
+  const [managerPriority, setManagerPriority] = useState<Task['priority']>('normal')
+  const [managerTags, setManagerTags] = useState('')
+  const [managerListName, setManagerListName] = useState('Inbox')
+  const [taskFilter, setTaskFilter] = useState<'active' | 'completed' | 'all'>('active')
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [subtaskParentId, setSubtaskParentId] = useState<string | null>(null)
@@ -56,6 +71,10 @@ function App() {
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [eventTitle, setEventTitle] = useState('')
   const [eventDate, setEventDate] = useState('2026-07-14')
+  const [eventNotes, setEventNotes] = useState('')
+  const [eventCategory, setEventCategory] = useState('General')
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date('2026-07-01T12:00:00'))
+  const [editingEvent, setEditingEvent] = useState<EventItem | null>(null)
   const [ideaTitle, setIdeaTitle] = useState('')
   const [ideaBody, setIdeaBody] = useState('')
   const [preferences, setPreferences] = useState<Preferences | null>(null)
@@ -189,8 +208,22 @@ function App() {
   async function createEvent(event: React.FormEvent) {
     event.preventDefault()
     if (!eventTitle.trim()) return
-    const response = await apiFetch('/api/events', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: eventTitle, date: eventDate }) })
-    if (response.ok) { const created = await response.json() as EventItem; setEvents(current => [...current, created]); setEventTitle('') }
+    const payload = { title: eventTitle, date: eventDate, notes: eventNotes, category: eventCategory }
+    const response = await apiFetch(editingEvent ? `/api/events/${editingEvent.id}` : '/api/events', { method: editingEvent ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    if (response.ok) {
+      const saved = await response.json() as EventItem
+      setEvents(current => editingEvent ? current.map(item => item.id === saved.id ? saved : item).sort((a, b) => a.date.localeCompare(b.date)) : [...current, saved].sort((a, b) => a.date.localeCompare(b.date)))
+      setEventTitle(''); setEventNotes(''); setEventCategory('General'); setEditingEvent(null)
+    }
+  }
+
+  function startEditEvent(item: EventItem) {
+    setEditingEvent(item); setEventTitle(item.title); setEventDate(item.date); setEventNotes(item.notes); setEventCategory(item.category); setCalendarMonth(new Date(`${item.date}T12:00:00`))
+  }
+
+  async function deleteEvent(id: string) {
+    const response = await apiFetch(`/api/events/${id}`, { method: 'DELETE' })
+    if (response.ok) { setEvents(current => current.filter(item => item.id !== id)); if (editingEvent?.id === id) setEditingEvent(null) }
   }
 
   async function createIdea(event: React.FormEvent) {
@@ -216,8 +249,9 @@ function App() {
     event.preventDefault()
     if (!managerSummary.trim()) return
     setSaving(true)
-    const response = await apiFetch('/api/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ summary: managerSummary }) })
-    if (response.ok) { setManagerSummary(''); await loadTasks() }
+    const payload = { summary: managerSummary, notes: managerNotes, dueDate: managerDueDate || null, priority: managerPriority, tags: managerTags.split(',').map(tag => tag.trim()).filter(Boolean), listName: managerListName.trim() || 'Inbox' }
+    const response = await apiFetch(editingTask ? `/api/tasks/${editingTask.id}` : '/api/tasks', { method: editingTask ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    if (response.ok) { setManagerSummary(''); setManagerNotes(''); setManagerDueDate(''); setManagerPriority('normal'); setManagerTags(''); setManagerListName('Inbox'); setEditingTask(null); await loadTasks() }
     setSaving(false)
   }
 
@@ -233,6 +267,10 @@ function App() {
   function startSubtask(parentId: string) {
     setSubtaskParentId(parentId)
     setView('tasks')
+  }
+
+  function startEditTask(task: Task) {
+    setEditingTask(task); setManagerSummary(task.summary); setManagerNotes(task.notes); setManagerDueDate(task.dueDate ?? ''); setManagerPriority(task.priority); setManagerTags(task.tags.join(', ')); setManagerListName(task.listName); setView('tasks')
   }
 
   async function toggleTask(id: string) {
@@ -299,6 +337,10 @@ function App() {
     }
   }
 
+  const visibleTasks = tasks.filter(task => taskFilter === 'all' || (taskFilter === 'completed' ? task.completed : !task.completed))
+  const activeTaskCount = tasks.filter(task => !task.completed).length
+  const monthEvents = events.filter(item => item.date.startsWith(`${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}`))
+
   return <div className="app-shell" data-theme={preferences?.theme ?? 'dark'} style={{ '--accent': preferences?.accent ?? '#c9f253' } as React.CSSProperties}>
     <aside className="sidebar">
       <div className="brand"><Sparkles size={18} /> <strong>Personal CRM</strong></div>
@@ -316,8 +358,8 @@ function App() {
       <header className="page-header"><div><div className="eyebrow">TUESDAY, JULY 14, 2026</div><h1>{view === 'dashboard' ? 'Dashboard' : view[0].toUpperCase() + view.slice(1)}</h1><p>Your personal command center.</p></div><div className="header-actions"><button className="icon-button" onClick={() => void downloadExport()} title="Download data export"><Download size={18} /></button><button className="icon-button" title="Settings"><Settings size={18} /></button></div></header>
       <section className="date-strip"><div><span className="date-number">14</span><span><b>Tuesday</b><small>July 2026</small></span></div><span className="status-dot">All systems ready</span></section>
       {view === 'settings' && preferences && <section className="module-workspace panel settings-workspace"><div className="panel-header"><div><span className="panel-kicker"><Settings size={15} /> WORKSPACE</span><h2>Preferences</h2></div></div><div className="settings-grid"><label>Theme<select value={preferences.theme} onChange={event => void savePreferences({ ...preferences, theme: event.target.value as Preferences['theme'] })}><option value="dark">Dark</option><option value="light">Light</option></select></label><label>Accent color<input type="color" value={preferences.accent} onChange={event => void savePreferences({ ...preferences, accent: event.target.value })} /></label><label>Timezone<select value={preferences.timezone} onChange={event => void savePreferences({ ...preferences, timezone: event.target.value })}><option>America/New_York</option><option>America/Chicago</option><option>America/Denver</option><option>America/Los_Angeles</option><option>UTC</option></select></label><label>Week starts<select value={preferences.weekStart} onChange={event => void savePreferences({ ...preferences, weekStart: event.target.value as Preferences['weekStart'] })}><option value="sunday">Sunday</option><option value="monday">Monday</option></select></label></div><h3>Enabled modules</h3><div className="toggle-list">{(['calendar', 'tasks', 'ideas'] as const).map(module => <label key={module}><input type="checkbox" checked={preferences.modules[module]} onChange={event => void savePreferences({ ...preferences, modules: { ...preferences.modules, [module]: event.target.checked } })} /> {module[0].toUpperCase() + module.slice(1)}</label>)}</div><h3>Dashboard widgets</h3><div className="toggle-list">{(['tasks', 'calendar', 'ideas'] as const).map(widget => <label key={widget}><input type="checkbox" checked={preferences.widgets[widget]} onChange={event => void savePreferences({ ...preferences, widgets: { ...preferences.widgets, [widget]: event.target.checked } })} /> {widget[0].toUpperCase() + widget.slice(1)}</label>)}</div><h3>Dashboard order</h3><div className="toggle-list">{preferences.dashboardOrder.map((widget, index) => <div key={widget} className="order-row"><span>{index + 1}. {widget[0].toUpperCase() + widget.slice(1)}</span><span><button type="button" className="icon-button" onClick={() => moveWidget(widget, -1)} disabled={index === 0} title="Move up"><ArrowUp size={15} /></button><button type="button" className="icon-button" onClick={() => moveWidget(widget, 1)} disabled={index === preferences.dashboardOrder.length - 1} title="Move down"><ArrowDown size={15} /></button></span></div>)}</div><h3>Change password</h3><form className="module-form stacked" onSubmit={changePassword}><input type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} placeholder="Current password" minLength={8} required /><input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder="New password (8+ characters)" minLength={8} required /><button type="submit">Change password</button></form>{passwordStatus && <p className="restore-status">{passwordStatus}</p>}<h3>Backup and restore</h3><label className="restore-control">Choose a Personal CRM JSON export<input type="file" accept="application/json,.json" onChange={event => void restoreBackup(event)} /></label>{preferencesSaving && <p className="muted">Saving preferences...</p>}{restoreStatus && <p className="restore-status">{restoreStatus}</p>}</section>}
-      {view === 'tasks' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CheckSquare size={15} /> PRODUCTIVITY</span><h2>Task manager</h2></div></div><form className="module-form" onSubmit={createManagerTask}><input value={managerSummary} onChange={event => setManagerSummary(event.target.value)} placeholder="Create a new task" /><button type="submit" disabled={saving}><Plus size={17} /> Add task</button></form>{subtaskParentId && <form className="module-form" onSubmit={createSubtask}><input autoFocus value={subtaskSummary} onChange={event => setSubtaskSummary(event.target.value)} placeholder={`Subtask of ${tasks.find(task => task.id === subtaskParentId)?.summary ?? 'task'}`} /><button type="submit" disabled={saving}><Plus size={17} /> Add subtask</button><button type="button" className="text-action" onClick={() => setSubtaskParentId(null)}>Cancel</button></form>}{tasks.length === 0 ? <div className="empty compact"><CheckSquare size={28} /><p>No tasks yet</p></div> : <TaskTree tasks={tasks} onToggle={id => void toggleTask(id)} onDelete={id => void deleteTask(id)} onAddSubtask={startSubtask} />}</section>}
-      {view === 'calendar' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CalendarDays size={15} /> UPCOMING</span><h2>Calendar events</h2></div></div><form className="module-form" onSubmit={createEvent}><input value={eventTitle} onChange={event => setEventTitle(event.target.value)} placeholder="Event title" /><input type="date" value={eventDate} onChange={event => setEventDate(event.target.value)} /><button type="submit"><Plus size={17} /> Add event</button></form>{events.length === 0 ? <div className="empty compact"><CalendarDays size={28} /><p>No events yet</p></div> : <ul className="simple-list">{events.map(item => <li key={item.id}><b>{item.title}</b><span>{item.date}</span></li>)}</ul>}</section>}
+      {view === 'tasks' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CheckSquare size={15} /> PRODUCTIVITY</span><h2>Task manager</h2></div><span className="count">{activeTaskCount}</span></div><form className="module-form task-editor" onSubmit={createManagerTask}><input value={managerSummary} onChange={event => setManagerSummary(event.target.value)} placeholder="Task title" required /><select value={managerListName} onChange={event => setManagerListName(event.target.value)}><option>Inbox</option><option>Personal</option><option>Work</option></select><select value={managerPriority} onChange={event => setManagerPriority(event.target.value as Task['priority'])}><option value="low">Low priority</option><option value="normal">Normal priority</option><option value="high">High priority</option></select><input type="date" value={managerDueDate} onChange={event => setManagerDueDate(event.target.value)} /><input value={managerTags} onChange={event => setManagerTags(event.target.value)} placeholder="Tags, comma separated" /><textarea value={managerNotes} onChange={event => setManagerNotes(event.target.value)} placeholder="Notes" /><button type="submit" disabled={saving}><Plus size={17} /> {editingTask ? 'Save task' : 'Add task'}</button>{editingTask && <button type="button" className="text-action" onClick={() => { setEditingTask(null); setManagerSummary(''); setManagerNotes(''); setManagerDueDate(''); setManagerTags(''); setManagerListName('Inbox'); setManagerPriority('normal') }}>Cancel</button>}</form>{subtaskParentId && <form className="module-form" onSubmit={createSubtask}><input autoFocus value={subtaskSummary} onChange={event => setSubtaskSummary(event.target.value)} placeholder={`Subtask of ${tasks.find(task => task.id === subtaskParentId)?.summary ?? 'task'}`} /><button type="submit" disabled={saving}><Plus size={17} /> Add subtask</button><button type="button" className="text-action" onClick={() => setSubtaskParentId(null)}>Cancel</button></form>}<div className="segmented" role="group" aria-label="Task filter"><button className={taskFilter === 'active' ? 'selected' : ''} onClick={() => setTaskFilter('active')}>Active</button><button className={taskFilter === 'completed' ? 'selected' : ''} onClick={() => setTaskFilter('completed')}>Completed</button><button className={taskFilter === 'all' ? 'selected' : ''} onClick={() => setTaskFilter('all')}>All</button></div>{visibleTasks.length === 0 ? <div className="empty compact"><CheckSquare size={28} /><p>No {taskFilter === 'all' ? '' : taskFilter} tasks</p></div> : <TaskTree tasks={visibleTasks} onToggle={id => void toggleTask(id)} onDelete={id => void deleteTask(id)} onAddSubtask={startSubtask} onEdit={startEditTask} />}</section>}
+      {view === 'calendar' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><CalendarDays size={15} /> PLANNING</span><h2>Calendar</h2></div></div><form className="module-form task-editor" onSubmit={createEvent}><input value={eventTitle} onChange={event => setEventTitle(event.target.value)} placeholder="Event title" required /><input type="date" value={eventDate} onChange={event => setEventDate(event.target.value)} required /><input value={eventCategory} onChange={event => setEventCategory(event.target.value)} placeholder="Category" required /><textarea value={eventNotes} onChange={event => setEventNotes(event.target.value)} placeholder="Event notes" /><button type="submit"><Plus size={17} /> {editingEvent ? 'Save event' : 'Add event'}</button>{editingEvent && <button type="button" className="text-action" onClick={() => { setEditingEvent(null); setEventTitle(''); setEventNotes(''); setEventCategory('General') }}>Cancel</button>}</form><div className="calendar-toolbar"><button className="icon-button" onClick={() => setCalendarMonth(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} title="Previous month"><ArrowLeft size={17} /></button><h3>{calendarMonth.toLocaleString(undefined, { month: 'long', year: 'numeric' })}</h3><button className="icon-button" onClick={() => setCalendarMonth(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} title="Next month"><ArrowRight size={17} /></button></div><div className="month-grid">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <b key={day} className="month-heading">{day}</b>)}{calendarDays(calendarMonth).map(day => { const date = isoDate(day); const dayEvents = events.filter(item => item.date === date); return <div className={`month-day ${day.getMonth() === calendarMonth.getMonth() ? '' : 'outside'}`} key={date}><span>{day.getDate()}</span>{dayEvents.slice(0, 2).map(item => <button key={item.id} className="calendar-event" onClick={() => startEditEvent(item)} title={`${item.category}: ${item.notes || item.title}`}>{item.title}</button>)}</div> })}</div><h3>Agenda</h3>{monthEvents.length === 0 ? <div className="empty compact"><CalendarDays size={28} /><p>No events this month</p></div> : <ul className="simple-list">{monthEvents.map(item => <li key={item.id}><span><b>{item.title}</b><small>{item.date} · {item.category}{item.notes ? ` · ${item.notes}` : ''}</small></span><span><button className="subtask" onClick={() => startEditEvent(item)} title="Edit event"><Pencil size={15} /></button><button className="delete" onClick={() => void deleteEvent(item.id)} title="Delete event"><Trash2 size={15} /></button></span></li>)}</ul>}</section>}
       {view === 'ideas' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><Sparkles size={15} /> CAPTURE</span><h2>Idea box</h2></div></div><form className="module-form stacked" onSubmit={createIdea}><input value={ideaTitle} onChange={event => setIdeaTitle(event.target.value)} placeholder="Idea title" /><textarea value={ideaBody} onChange={event => setIdeaBody(event.target.value)} placeholder="Capture the thought..." /><button type="submit"><Plus size={17} /> Save idea</button></form>{ideas.length === 0 ? <div className="empty compact"><Sparkles size={28} /><p>No ideas yet</p></div> : <ul className="simple-list">{ideas.map(item => <li key={item.id}><b>{item.title}</b><span>{item.body}</span></li>)}</ul>}</section>}
       {view === 'finance' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><WalletCards size={15} /> FINANCE</span><h2>Wallet</h2></div></div><form className="module-form" onSubmit={createAccount}><input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="Account name" /><input type="number" step="0.01" value={accountBalance} onChange={event => setAccountBalance(event.target.value)} placeholder="Opening balance" /><button type="submit"><Plus size={17} /> Add account</button></form>{accounts.length === 0 ? <div className="empty compact"><WalletCards size={28} /><p>No accounts yet</p></div> : <ul className="simple-list">{accounts.map(account => <li key={account.id}><b>{account.name}</b><span>{account.currency} {(account.balanceMinor / 100).toFixed(2)}</span></li>)}</ul>}<h3>Record transaction</h3><form className="module-form" onSubmit={createTransaction}><select value={transactionAccount} onChange={event => setTransactionAccount(event.target.value)}><option value="">Choose account</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input value={transactionDescription} onChange={event => setTransactionDescription(event.target.value)} placeholder="Description" /><input type="number" step="0.01" value={transactionAmount} onChange={event => setTransactionAmount(event.target.value)} placeholder="Amount (+ income, - expense)" /><button type="submit"><Plus size={17} /> Record</button></form>{transactions.length > 0 && <ul className="simple-list">{transactions.slice(0, 8).map(transaction => <li key={transaction.id}><b>{transaction.description}</b><span>{(transaction.amountMinor / 100).toFixed(2)} · {transaction.date}</span></li>)}</ul>}</section>}
       {view === 'goals' && <section className="module-workspace panel"><div className="panel-header"><div><span className="panel-kicker"><Target size={15} /> PROGRESS</span><h2>Goals</h2></div></div><form className="module-form" onSubmit={createGoal}><input value={goalTitle} onChange={event => setGoalTitle(event.target.value)} placeholder="Goal title" /><input type="number" step="0.01" value={goalTarget} onChange={event => setGoalTarget(event.target.value)} placeholder="Target amount (optional)" /><input type="date" value={goalDueDate} onChange={event => setGoalDueDate(event.target.value)} /><button type="submit"><Plus size={17} /> Add goal</button></form>{goals.length === 0 ? <div className="empty compact"><Target size={28} /><p>No goals yet</p></div> : <ul className="task-list">{goals.map(goal => <li key={goal.id}><button className={`check ${goal.completed ? 'done' : ''}`} onClick={() => void toggleGoal(goal.id)} title="Toggle goal"><Target size={17} /></button><span className={goal.completed ? 'completed' : ''}>{goal.title}{goal.dueDate ? ` · due ${goal.dueDate}` : ''}</span></li>)}</ul>}</section>}
@@ -327,10 +369,10 @@ function App() {
       {view === 'dashboard' && <section className="dashboard-grid">
         {(!preferences || preferences.widgets.tasks) && <article className="panel tasks-panel" style={{ order: preferences?.dashboardOrder.indexOf('tasks') ?? 0 }}><div className="panel-header"><div><span className="panel-kicker"><CheckSquare size={15} /> PRODUCTIVITY</span><h2>To-Do List</h2></div><span className="count">{tasks.length}</span></div>
           <form className="quick-add" onSubmit={createTask}><input value={summary} onChange={event => setSummary(event.target.value)} placeholder="What needs doing?" /><button disabled={saving} title="Create task"><Plus size={18} /></button></form>
-          {loading ? <p className="muted">Loading tasks...</p> : tasks.length === 0 ? <div className="empty"><CheckSquare size={30} /><p>No tasks yet</p><small>Add your first task above.</small></div> : <TaskTree tasks={tasks} onToggle={id => void toggleTask(id)} onDelete={id => void deleteTask(id)} onAddSubtask={startSubtask} />}
+          {loading ? <p className="muted">Loading tasks...</p> : tasks.length === 0 ? <div className="empty"><CheckSquare size={30} /><p>No tasks yet</p><small>Add your first task above.</small></div> : <TaskTree tasks={tasks} onToggle={id => void toggleTask(id)} onDelete={id => void deleteTask(id)} onAddSubtask={startSubtask} onEdit={startEditTask} />}
           <button className="text-action" onClick={() => setView('tasks')}>Open task manager <ChevronRight size={15} /></button>
         </article>}
-        {(!preferences || preferences.widgets.calendar) && <article className="panel calendar-panel" style={{ order: preferences?.dashboardOrder.indexOf('calendar') ?? 1 }}><div className="panel-header"><div><span className="panel-kicker"><CalendarDays size={15} /> PLANNING</span><h2>Calendar</h2></div><button className="icon-button" onClick={() => setView('calendar')} title="Open calendar"><ChevronRight size={17} /></button></div><div className="calendar-empty"><CalendarDays size={38} /><p>{events.length ? `${events.length} event${events.length === 1 ? '' : 's'} scheduled` : 'Your schedule is clear'}</p><small>{events.length ? 'Open the calendar to review your upcoming events.' : 'Create an event when something needs a place on the calendar.'}</small></div></article>}
+        {(!preferences || preferences.widgets.calendar) && <article className="panel calendar-panel" style={{ order: preferences?.dashboardOrder.indexOf('calendar') ?? 1 }}><div className="panel-header"><div><span className="panel-kicker"><CalendarDays size={15} /> PLANNING</span><h2>Calendar</h2></div><button className="icon-button" onClick={() => setView('calendar')} title="Open calendar"><ChevronRight size={17} /></button></div>{events.length ? <ul className="dashboard-agenda">{events.slice(0, 3).map(item => <li key={item.id}><b>{item.title}</b><span>{item.date} · {item.category}</span></li>)}</ul> : <div className="calendar-empty"><CalendarDays size={38} /><p>Your schedule is clear</p><small>Create an event when something needs a place on the calendar.</small></div>}</article>}
         {(!preferences || preferences.widgets.ideas) && <article className="panel notes-panel" style={{ order: preferences?.dashboardOrder.indexOf('ideas') ?? 2 }}><div className="panel-header"><div><span className="panel-kicker"><Sparkles size={15} /> CAPTURE</span><h2>Ideas</h2></div><button className="icon-button" onClick={() => setView('ideas')} title="Open ideas"><Plus size={17} /></button></div><div className="empty compact"><Sparkles size={28} /><p>{ideas.length ? `${ideas.length} idea${ideas.length === 1 ? '' : 's'} captured` : 'Nothing captured yet'}</p><small>{ideas.length ? 'Open the idea box to review your notes.' : 'Keep a thought before it gets away.'}</small></div></article>}
       </section>}
     </main>
