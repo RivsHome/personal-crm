@@ -15,7 +15,7 @@ Status: implementation in progress. The React/API foundation, authenticated shel
 - Latest verification: authenticated browser smoke covers login, Wallet account/transaction creation, and Goal creation.
 - Latest verification: authenticated browser smoke covers Movies, Music, and Memories creation.
 - Latest verification: Docker browser smoke covers attachment upload, CSRF-protected password validation, and authenticated settings flows.
-- Production checkpoint: Dokploy deployed commit `26e793b`; `https://life.rivsconsole.shop` resolves publicly, serves the web app, passes API health/readiness checks, and passes browser login.
+- Production checkpoint: Dokploy deployed commit `64af781`; `https://life.rivsconsole.shop` resolves publicly, serves the hardened web app, passes API health/readiness checks, and passes browser login.
 
 ## 1. Objective
 
