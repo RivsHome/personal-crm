@@ -14,6 +14,7 @@ Status: implementation in progress. The React/API foundation, authenticated shel
 - Verification: type checking, API tests, production builds, live authentication, authenticated export/restore smoke tests, Compose image builds, healthy PostgreSQL/API/web containers, Nginx routing, and post-API-restart persistence all pass locally.
 - Latest verification: authenticated browser smoke covers login, Wallet account/transaction creation, and Goal creation.
 - Latest verification: authenticated browser smoke covers Movies, Music, and Memories creation.
+- Production checkpoint: Dokploy deployed commit `26e793b`; `https://life.rivsconsole.shop` resolves publicly, serves the web app, passes API health/readiness checks, and passes browser login.
 
 ## 1. Objective
 
