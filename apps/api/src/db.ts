@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const { Pool } = pg
@@ -24,6 +24,7 @@ export type GoalRecord = { id: string; title: string; targetMinor: number | null
 export type MovieRecord = { id: string; title: string; year: number | null; watched: boolean; rating: number | null; notes: string }
 export type MusicRecord = { id: string; title: string; artist: string; album: string; listened: boolean }
 export type MemoryRecord = { id: string; title: string; body: string; occurredOn: string | null }
+export type AttachmentRecord = { id: string; memoryId: string; filename: string; mimeType: string; byteSize: number; storageKey: string }
 export type Preferences = {
   theme: 'dark' | 'light'
   accent: string
@@ -31,6 +32,7 @@ export type Preferences = {
   weekStart: 'sunday' | 'monday'
   modules: { calendar: boolean; tasks: boolean; ideas: boolean }
   widgets: { tasks: boolean; calendar: boolean; ideas: boolean }
+  dashboardOrder: Array<'tasks' | 'calendar' | 'ideas'>
 }
 export type PreferencesPatch = Partial<Omit<Preferences, 'modules' | 'widgets'>> & { modules?: Partial<Preferences['modules']>; widgets?: Partial<Preferences['widgets']> }
 
@@ -40,7 +42,7 @@ let localEvents: EventRecord[] = []
 let localIdeas: IdeaRecord[] = []
 let localPreferences: Preferences = {
   theme: 'dark', accent: '#c9f253', timezone: 'America/New_York', weekStart: 'sunday',
-  modules: { calendar: true, tasks: true, ideas: true }, widgets: { tasks: true, calendar: true, ideas: true }
+  modules: { calendar: true, tasks: true, ideas: true }, widgets: { tasks: true, calendar: true, ideas: true }, dashboardOrder: ['tasks', 'calendar', 'ideas']
 }
 let postgresAvailable = false
 
@@ -99,7 +101,7 @@ export async function createEvent(title: string, date: string, notes: string) {
 
 export async function getPreferences(): Promise<Preferences> {
   if (!postgresAvailable) return localPreferences
-  const result = await pool.query('SELECT theme, accent, timezone, week_start AS "weekStart", modules, widgets FROM user_preferences WHERE user_id = $1', ['local'])
+  const result = await pool.query('SELECT theme, accent, timezone, week_start AS "weekStart", modules, widgets, dashboard_order AS "dashboardOrder" FROM user_preferences WHERE user_id = $1', ['local'])
   return (result.rows[0] as Preferences | undefined) ?? localPreferences
 }
 
@@ -107,7 +109,7 @@ export async function updatePreferences(input: PreferencesPatch): Promise<Prefer
   const base = await getPreferences()
   const current: Preferences = { ...base, ...input, modules: { ...base.modules, ...(input.modules ?? {}) }, widgets: { ...base.widgets, ...(input.widgets ?? {}) } }
   if (!postgresAvailable) { localPreferences = current; await saveCollection('preferences.json', [current]); return current }
-  await pool.query(`INSERT INTO user_preferences (user_id, theme, accent, timezone, week_start, modules, widgets) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (user_id) DO UPDATE SET theme=$2, accent=$3, timezone=$4, week_start=$5, modules=$6, widgets=$7, updated_at=NOW()`, ['local', current.theme, current.accent, current.timezone, current.weekStart, JSON.stringify(current.modules), JSON.stringify(current.widgets)])
+  await pool.query(`INSERT INTO user_preferences (user_id, theme, accent, timezone, week_start, modules, widgets, dashboard_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (user_id) DO UPDATE SET theme=$2, accent=$3, timezone=$4, week_start=$5, modules=$6, widgets=$7, dashboard_order=$8, updated_at=NOW()`, ['local', current.theme, current.accent, current.timezone, current.weekStart, JSON.stringify(current.modules), JSON.stringify(current.widgets), JSON.stringify(current.dashboardOrder)])
   return current
 }
 
@@ -199,6 +201,34 @@ export async function listMemories(): Promise<MemoryRecord[]> {
 export async function createMemory(title: string, body: string, occurredOn: string | null) {
   const result = await pool.query(`INSERT INTO memory_entries (id, title, body, occurred_on) VALUES ($1,$2,$3,$4) RETURNING id, title, body, occurred_on AS "occurredOn"`, [crypto.randomUUID(), title, body, occurredOn])
   return result.rows[0] as MemoryRecord
+}
+
+export async function listAttachments(memoryId: string): Promise<AttachmentRecord[]> {
+  if (!postgresAvailable) return []
+  const result = await pool.query(`SELECT id, memory_id AS "memoryId", filename, mime_type AS "mimeType", byte_size AS "byteSize", storage_key AS "storageKey"
+    FROM attachments WHERE memory_id = $1 AND user_id = 'local' ORDER BY created_at DESC`, [memoryId])
+  return result.rows.map(row => ({ ...row, byteSize: Number(row.byteSize) })) as AttachmentRecord[]
+}
+
+export async function createAttachment(memoryId: string, filename: string, mimeType: string, storageKey: string, byteSize: number) {
+  const result = await pool.query(`INSERT INTO attachments (id, memory_id, filename, mime_type, storage_key, byte_size)
+    SELECT $1, id, $3, $4, $5, $6 FROM memory_entries WHERE id = $2 AND user_id = 'local'
+    RETURNING id, memory_id AS "memoryId", filename, mime_type AS "mimeType", byte_size AS "byteSize", storage_key AS "storageKey"`, [crypto.randomUUID(), memoryId, filename, mimeType, storageKey, byteSize])
+  if (!result.rowCount) return null
+  return { ...result.rows[0], byteSize: Number(result.rows[0].byteSize) } as AttachmentRecord
+}
+
+export async function getAttachment(id: string) {
+  const result = await pool.query(`SELECT id, memory_id AS "memoryId", filename, mime_type AS "mimeType", byte_size AS "byteSize", storage_key AS "storageKey"
+    FROM attachments WHERE id = $1 AND user_id = 'local'`, [id])
+  return result.rows[0] ? { ...result.rows[0], byteSize: Number(result.rows[0].byteSize) } as AttachmentRecord : null
+}
+
+export async function deleteAttachment(id: string) {
+  const attachment = await getAttachment(id)
+  if (!attachment) return null
+  await pool.query(`DELETE FROM attachments WHERE id = $1 AND user_id = 'local'`, [id])
+  return attachment
 }
 
 export async function listTasks() {

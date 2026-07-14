@@ -1,6 +1,6 @@
 # React Life Management App Plan
 
-Status: implementation in progress. The React/API foundation, authenticated shell, Tasks, Calendar, Ideas, Finance, Goals, Movies, Music, Memories, preferences, module/widget controls, export/restore, and Docker deployment configuration are implemented and container-smoke-tested in this workspace. Attachments, advanced drag-and-drop dashboard editing, stronger production security, and production VPS rollout remain follow-up work.
+Status: implementation in progress. The React/API foundation, authenticated shell, Tasks, Calendar, Ideas, Finance, Goals, Movies, Music, Memories, preferences, module/widget controls, password change, CSRF protection, login throttling, local persistent attachments, export/restore, and Docker deployment configuration are implemented and container-smoke-tested in this workspace. Provider-backed attachment archives, full drag/resize dashboard editing, password-reset email delivery, and long-term operational soak testing remain follow-up work.
 
 ## Current Implementation Checkpoint
 
@@ -14,6 +14,7 @@ Status: implementation in progress. The React/API foundation, authenticated shel
 - Verification: type checking, API tests, production builds, live authentication, authenticated export/restore smoke tests, Compose image builds, healthy PostgreSQL/API/web containers, Nginx routing, and post-API-restart persistence all pass locally.
 - Latest verification: authenticated browser smoke covers login, Wallet account/transaction creation, and Goal creation.
 - Latest verification: authenticated browser smoke covers Movies, Music, and Memories creation.
+- Latest verification: Docker browser smoke covers attachment upload, CSRF-protected password validation, and authenticated settings flows.
 - Production checkpoint: Dokploy deployed commit `26e793b`; `https://life.rivsconsole.shop` resolves publicly, serves the web app, passes API health/readiness checks, and passes browser login.
 
 ## 1. Objective

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   modules JSONB NOT NULL DEFAULT '{"calendar":true,"tasks":true,"ideas":true}',
   widgets JSONB NOT NULL DEFAULT '{"tasks":true,"calendar":true,"ideas":true}', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS dashboard_order JSONB NOT NULL DEFAULT '["tasks","calendar","ideas"]';
 
 CREATE TABLE IF NOT EXISTS financial_accounts (
   id UUID PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'local', name VARCHAR(120) NOT NULL,
@@ -55,4 +56,9 @@ CREATE TABLE IF NOT EXISTS music_tracks (
 CREATE TABLE IF NOT EXISTS memory_entries (
   id UUID PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'local', title VARCHAR(240) NOT NULL,
   body TEXT NOT NULL DEFAULT '', occurred_on DATE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS attachments (
+  id UUID PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'local', memory_id UUID NOT NULL REFERENCES memory_entries(id) ON DELETE CASCADE,
+  filename VARCHAR(240) NOT NULL, mime_type VARCHAR(160) NOT NULL, storage_key VARCHAR(240) NOT NULL UNIQUE,
+  byte_size BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

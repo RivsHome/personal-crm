@@ -24,5 +24,12 @@ async function verify(password: string, stored: string) { const [salt, hex] = st
 export async function initializeAuth() { await load() }
 export async function register(email: string, name: string, password: string) { if (user) return null; user = { email, name, password: await hash(password) }; await save(); return { email, name } }
 export async function login(email: string, password: string) { if (!user || user.email !== email || !(await verify(password, user.password))) return null; const session = { token: randomBytes(32).toString('hex'), email, expires: Date.now() + 1000 * 60 * 60 * 24 * 30 }; sessions.set(session.token, session); await save(); return session }
+export async function changePassword(email: string, currentPassword: string, newPassword: string) {
+  if (!user || user.email !== email || !(await verify(currentPassword, user.password))) return false
+  user.password = await hash(newPassword)
+  for (const [token, session] of sessions) if (session.email === email) sessions.delete(token)
+  await save()
+  return true
+}
 export function current(token?: string) { const session = token ? sessions.get(token) : undefined; return session && session.expires > Date.now() && user ? { email: user.email, name: user.name } : null }
 export async function logout(token?: string) { if (token) { sessions.delete(token); await save() } }
