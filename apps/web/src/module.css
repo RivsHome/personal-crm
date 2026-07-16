@@ -141,6 +141,27 @@ nav a { cursor: pointer; }
   padding: 6px;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-creator-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #171819;
+  padding: 0 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .task-list .task-item {
   display: block;
   padding: 0;
@@ -482,6 +503,17 @@ nav a { cursor: pointer; }
   .toggle-list label,
   .order-row {
     min-height: 46px;
+  }
+
+  .panel-actions {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .task-creator-toggle {
+    min-height: 44px;
+    padding: 0 10px;
   }
 
   .simple-list {
