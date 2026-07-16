@@ -34,18 +34,26 @@ function TaskTree({ tasks, onToggle, onDelete, onAddSubtask, onEdit, onReorder, 
     event.currentTarget.setPointerCapture(event.pointerId)
     setDraggingId(taskId)
   }
-  function moveDrag(target: Task) {
-    if (!draggingId || draggingId === target.id) return
-    const source = tasks.find(task => task.id === draggingId)
+  function moveDrag(target: Task, sourceId = draggingId) {
+    if (!sourceId || sourceId === target.id) return
+    const source = tasks.find(task => task.id === sourceId)
     if (!source || (source.parentId ?? null) !== (target.parentId ?? null) || source.completed !== target.completed) return
-    onReorder(target.parentId ?? null, draggingId, target.id)
+    onReorder(target.parentId ?? null, sourceId, target.id)
+  }
+  function moveDragOverPointer(event: React.PointerEvent, sourceId: string) {
+    if (!draggingId) return
+    const element = document.elementFromPoint(event.clientX, event.clientY)
+    const row = element?.closest<HTMLElement>('[data-task-id]')
+    const targetId = row?.dataset.taskId
+    const target = targetId ? tasks.find(task => task.id === targetId) : undefined
+    if (target) moveDrag(target, sourceId)
   }
   function stopDrag() { setDraggingId(null) }
   function render(parentId: string | null): React.ReactNode[] {
     return tasks.filter(task => (task.parentId ?? null) === parentId).map(task => {
       const hasChildren = tasks.some(child => child.parentId === task.id)
       const isAddingSubtask = subtaskParentId === task.id
-      return <li key={task.id} className={`task-item ${draggingId === task.id ? 'dragging' : ''}`} onPointerEnter={() => moveDrag(task)}><div className="task-row"><button className="drag-handle" type="button" onPointerDown={event => startDrag(event, task.id)} onPointerUp={stopDrag} onPointerCancel={stopDrag} title="Drag to reorder"><GripVertical size={17} /></button><button className={`check ${task.completed ? 'done' : ''}`} onClick={() => onToggle(task.id)} title="Toggle task"><CheckSquare size={17} /></button><span className={task.completed ? 'completed' : ''}><b>{task.summary}</b><small className="task-meta">{task.listName} · {task.priority}{task.dueDate ? ` · due ${task.dueDate}` : ''}{task.tags.length ? ` · ${task.tags.map(tag => `#${tag}`).join(' ')}` : ''}</small></span>{hasChildren && <button className="subtask" onClick={() => toggleExpanded(task.id)} title={expanded.has(task.id) ? 'Hide subtasks' : 'Show subtasks'}><ChevronDown className={expanded.has(task.id) ? 'expanded' : ''} size={16} /></button>}<button className="subtask" onClick={() => onEdit(task)} title="Edit task"><Pencil size={15} /></button><button className="subtask" onClick={() => onAddSubtask(task.id)} title="Add subtask"><Plus size={15} /></button><button className="delete" onClick={() => onDelete(task.id)} title="Delete task"><Trash2 size={15} /></button></div>{isAddingSubtask && <form className="subtask-dropdown" onSubmit={onCreateSubtask}><input autoFocus value={subtaskSummary} onChange={event => onSubtaskSummaryChange(event.target.value)} placeholder={`Subtask of ${task.summary}`} /><button type="submit" disabled={saving}><Plus size={16} /> Add</button><button type="button" className="text-action" onClick={onCancelSubtask}>Cancel</button></form>}{hasChildren && expanded.has(task.id) && <ul className="task-list nested-tasks">{render(task.id)}</ul>}</li>
+      return <li key={task.id} data-task-id={task.id} className={`task-item ${draggingId === task.id ? 'dragging' : ''}`}><div className="task-row"><button className="drag-handle" type="button" onPointerDown={event => startDrag(event, task.id)} onPointerMove={event => moveDragOverPointer(event, task.id)} onPointerUp={stopDrag} onPointerCancel={stopDrag} title="Drag to reorder"><GripVertical size={17} /></button><button className={`check ${task.completed ? 'done' : ''}`} onClick={() => onToggle(task.id)} title="Toggle task"><CheckSquare size={17} /></button><span className={task.completed ? 'completed' : ''}><b>{task.summary}</b><small className="task-meta">{task.listName} · {task.priority}{task.dueDate ? ` · due ${task.dueDate}` : ''}{task.tags.length ? ` · ${task.tags.map(tag => `#${tag}`).join(' ')}` : ''}</small></span>{hasChildren && <button className="subtask" onClick={() => toggleExpanded(task.id)} title={expanded.has(task.id) ? 'Hide subtasks' : 'Show subtasks'}><ChevronDown className={expanded.has(task.id) ? 'expanded' : ''} size={16} /></button>}<button className="subtask" onClick={() => onEdit(task)} title="Edit task"><Pencil size={15} /></button><button className="subtask" onClick={() => onAddSubtask(task.id)} title="Add subtask"><Plus size={15} /></button><button className="delete" onClick={() => onDelete(task.id)} title="Delete task"><Trash2 size={15} /></button></div>{isAddingSubtask && <form className="subtask-dropdown" onSubmit={onCreateSubtask}><input autoFocus value={subtaskSummary} onChange={event => onSubtaskSummaryChange(event.target.value)} placeholder={`Subtask of ${task.summary}`} /><button type="submit" disabled={saving}><Plus size={16} /> Add</button><button type="button" className="text-action" onClick={onCancelSubtask}>Cancel</button></form>}{hasChildren && expanded.has(task.id) && <ul className="task-list nested-tasks">{render(task.id)}</ul>}</li>
     })
   }
   return <ul className="task-list">{render(null)}</ul>
