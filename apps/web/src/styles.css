@@ -308,7 +308,7 @@ nav p {
   min-width: 0;
 }
 
-.check, .delete {
+.check, .delete, .drag-handle {
   display: grid;
   place-items: center;
   min-width: 38px;
@@ -318,6 +318,17 @@ nav p {
   color: #777a82;
   cursor: pointer;
   padding: 3px;
+}
+
+.drag-handle {
+  color: #666970;
+  cursor: grab;
+  touch-action: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+  color: #c9f253;
 }
 
 .check.done { color: #c9f253; }
@@ -595,7 +606,7 @@ nav p {
     padding: 8px 0;
   }
 
-  .check, .delete {
+  .check, .delete, .drag-handle {
     min-width: 42px;
     min-height: 42px;
   }

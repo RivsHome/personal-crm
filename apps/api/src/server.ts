@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
-import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listIdeas, listMemories, listMovies, listMusic, listTasks, restoreData, toggleGoal, toggleTask, updateEvent, updatePreferences, updateTask } from './db.js'
+import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listIdeas, listMemories, listMovies, listMusic, listTasks, reorderTasks, restoreData, toggleGoal, toggleTask, updateEvent, updatePreferences, updateTask } from './db.js'
 import { changePassword, current, initializeAuth, login, logout, register } from './auth.js'
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
@@ -47,6 +47,7 @@ const taskInput = z.object({
   tags: z.array(z.string().trim().min(1).max(40)).max(12).optional().default([]),
   listName: z.string().trim().min(1).max(80).optional().default('Inbox')
 })
+const taskReorderInput = z.object({ parentId: z.string().uuid().nullable().default(null), taskIds: z.array(z.string().uuid()).min(1).max(500) })
 const eventInput = z.object({ title: z.string().trim().min(1).max(240), date: z.string().date(), notes: z.string().max(5000).default(''), category: z.string().trim().min(1).max(80).optional().default('General') })
 const ideaInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default('') })
 const accountInput = z.object({ name: z.string().trim().min(1).max(120), kind: z.string().trim().min(1).max(40), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int().safe() })
@@ -59,7 +60,7 @@ const loginCredentials = z.object({ email: z.string().email(), password: z.strin
 const registrationCredentials = loginCredentials.extend({ name: z.string().trim().min(1).max(80) })
 const preferencesInput = z.object({ theme: z.enum(['dark', 'light']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), timezone: z.string().min(1).max(80).optional(), weekStart: z.enum(['sunday', 'monday']).optional(), modules: z.object({ calendar: z.boolean().optional(), tasks: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), widgets: z.object({ tasks: z.boolean().optional(), calendar: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), dashboardOrder: z.array(z.enum(['tasks', 'calendar', 'ideas'])).length(3).optional() })
 const restoreInput = z.object({
-  tasks: z.array(z.object({ id: z.string().uuid(), parentId: z.string().uuid().nullable().optional().default(null), summary: z.string().min(1).max(240), notes: z.string(), dueDate: z.string().date().nullable().optional().default(null), priority: z.enum(['low', 'normal', 'high']).optional().default('normal'), tags: z.array(z.string().min(1).max(40)).optional().default([]), listName: z.string().min(1).max(80).optional().default('Inbox'), completed: z.boolean(), createdAt: z.string().datetime() })),
+  tasks: z.array(z.object({ id: z.string().uuid(), parentId: z.string().uuid().nullable().optional().default(null), summary: z.string().min(1).max(240), notes: z.string(), dueDate: z.string().date().nullable().optional().default(null), priority: z.enum(['low', 'normal', 'high']).optional().default('normal'), tags: z.array(z.string().min(1).max(40)).optional().default([]), listName: z.string().min(1).max(80).optional().default('Inbox'), sortOrder: z.number().int().optional().default(0), completed: z.boolean(), createdAt: z.string().datetime() })),
   events: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), date: z.string().date(), notes: z.string(), category: z.string().min(1).max(80).optional().default('General') })),
   ideas: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), createdAt: z.string().datetime() })),
   financialAccounts: z.array(z.object({ id: z.string().uuid(), name: z.string().min(1).max(120), kind: z.string(), currency: z.string().regex(/^[A-Z]{3}$/), openingBalanceMinor: z.number().int() })).optional().default([]),
@@ -161,6 +162,13 @@ app.patch('/api/tasks/:id/toggle', async (request, reply) => {
   const task = await toggleTask((request.params as { id: string }).id)
   if (!task) return reply.code(404).send({ error: 'Task not found' })
   return task
+})
+
+app.patch('/api/tasks/reorder', async (request, reply) => {
+  const parsed = taskReorderInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid task order', issues: parsed.error.issues })
+  if (!await reorderTasks(parsed.data.parentId, parsed.data.taskIds)) return reply.code(400).send({ error: 'Task order does not match this list.' })
+  return { reordered: true }
 })
 
 app.delete('/api/tasks/:id', async (request, reply) => {

@@ -17,6 +17,7 @@ export type TaskRecord = {
   priority: 'low' | 'normal' | 'high'
   tags: string[]
   listName: string
+  sortOrder: number
   completed: boolean
   createdAt: string
 }
@@ -62,7 +63,7 @@ function normalizeEvent(row: Record<string, unknown>): EventRecord {
 }
 
 function normalizeTask(row: Record<string, unknown>): TaskRecord {
-  return { ...row, dueDate: dateOnly(row.dueDate), tags: Array.isArray(row.tags) ? row.tags.map(String) : [] } as TaskRecord
+  return { ...row, dueDate: dateOnly(row.dueDate), tags: Array.isArray(row.tags) ? row.tags.map(String) : [], sortOrder: Number(row.sortOrder ?? 0) } as TaskRecord
 }
 
 export function databaseReady() { return postgresAvailable }
@@ -272,20 +273,25 @@ export async function deleteAttachment(id: string) {
 }
 
 export async function listTasks() {
-  if (!postgresAvailable) return localTasks
-  const result = await pool.query('SELECT id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY completed ASC, due_date ASC NULLS LAST, created_at DESC', ['local'])
+  if (!postgresAvailable) return localTasks.map((task, index) => ({ ...task, sortOrder: task.sortOrder ?? index })).sort((a, b) => Number(a.completed) - Number(b.completed) || a.sortOrder - b.sortOrder || b.createdAt.localeCompare(a.createdAt))
+  const result = await pool.query('SELECT id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", sort_order AS "sortOrder", completed, created_at AS "createdAt" FROM tasks WHERE user_id = $1 ORDER BY completed ASC, sort_order ASC, created_at DESC', ['local'])
   return result.rows.map(normalizeTask)
 }
 
 export type TaskInput = Pick<TaskRecord, 'summary' | 'notes' | 'dueDate' | 'priority' | 'tags' | 'listName'>
 
 export async function createTask(input: TaskInput, parentId: string | null = null) {
-  const task = { id: crypto.randomUUID(), parentId, ...input, completed: false, createdAt: new Date().toISOString() }
+  const sortOrder = postgresAvailable ? 0 : Math.min(0, ...localTasks.filter(item => (item.parentId ?? null) === parentId).map(item => item.sortOrder ?? 0)) - 1000
+  const task = { id: crypto.randomUUID(), parentId, ...input, sortOrder, completed: false, createdAt: new Date().toISOString() }
   if (!postgresAvailable) {
     if (parentId && !localTasks.some(item => item.id === parentId)) return null
     localTasks.unshift(task); await saveLocalTasks(); return task
   }
-  const result = await pool.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, due_date, priority, tags, list_name) SELECT $1, $2, $3::uuid, $4, $5, $6, $7, $8::jsonb, $9 WHERE $3::uuid IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id = $3::uuid AND user_id = $2) RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt"', [task.id, 'local', parentId, input.summary, input.notes, input.dueDate, input.priority, JSON.stringify(input.tags), input.listName])
+  const result = await pool.query(`INSERT INTO tasks (id, user_id, parent_id, summary, notes, due_date, priority, tags, list_name, sort_order)
+    SELECT $1, $2, $3::uuid, $4, $5, $6, $7, $8::jsonb, $9,
+      COALESCE((SELECT MIN(sort_order) - 1000 FROM tasks WHERE user_id = $2 AND parent_id IS NOT DISTINCT FROM $3::uuid), 0)
+    WHERE $3::uuid IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id = $3::uuid AND user_id = $2)
+    RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", sort_order AS "sortOrder", completed, created_at AS "createdAt"`, [task.id, 'local', parentId, input.summary, input.notes, input.dueDate, input.priority, JSON.stringify(input.tags), input.listName])
   if (!result.rowCount) return null
   return normalizeTask(result.rows[0])
 }
@@ -296,7 +302,7 @@ export async function updateTask(id: string, input: TaskInput) {
     if (task) { Object.assign(task, input); await saveLocalTasks() }
     return task
   }
-  const result = await pool.query('UPDATE tasks SET summary = $2, notes = $3, due_date = $4, priority = $5, tags = $6::jsonb, list_name = $7, updated_at = NOW() WHERE id = $1 AND user_id = $8 RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt"', [id, input.summary, input.notes, input.dueDate, input.priority, JSON.stringify(input.tags), input.listName, 'local'])
+  const result = await pool.query('UPDATE tasks SET summary = $2, notes = $3, due_date = $4, priority = $5, tags = $6::jsonb, list_name = $7, updated_at = NOW() WHERE id = $1 AND user_id = $8 RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", sort_order AS "sortOrder", completed, created_at AS "createdAt"', [id, input.summary, input.notes, input.dueDate, input.priority, JSON.stringify(input.tags), input.listName, 'local'])
   return result.rows[0] ? normalizeTask(result.rows[0]) : undefined
 }
 
@@ -306,8 +312,34 @@ export async function toggleTask(id: string) {
     if (task) { task.completed = !task.completed; await saveLocalTasks() }
     return task
   }
-  const result = await pool.query('UPDATE tasks SET completed = NOT completed, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", completed, created_at AS "createdAt"', [id, 'local'])
+  const result = await pool.query('UPDATE tasks SET completed = NOT completed, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id, parent_id AS "parentId", summary, notes, due_date AS "dueDate", priority, tags, list_name AS "listName", sort_order AS "sortOrder", completed, created_at AS "createdAt"', [id, 'local'])
   return result.rows[0] ? normalizeTask(result.rows[0]) : undefined
+}
+
+export async function reorderTasks(parentId: string | null, taskIds: string[]) {
+  if (!postgresAvailable) {
+    const siblingIds = new Set(localTasks.filter(task => (task.parentId ?? null) === parentId).map(task => task.id))
+    if (taskIds.some(id => !siblingIds.has(id))) return false
+    const order = new Map(taskIds.map((id, index) => [id, (index + 1) * 1000]))
+    localTasks = localTasks.map(task => order.has(task.id) ? { ...task, sortOrder: order.get(task.id)! } : task)
+    await saveLocalTasks()
+    return true
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const existing = await client.query('SELECT id FROM tasks WHERE user_id = $1 AND parent_id IS NOT DISTINCT FROM $2::uuid', ['local', parentId])
+    const existingIds = new Set(existing.rows.map(row => String(row.id)))
+    if (taskIds.some(id => !existingIds.has(id))) { await client.query('ROLLBACK'); return false }
+    for (const [index, id] of taskIds.entries()) await client.query('UPDATE tasks SET sort_order = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3', [(index + 1) * 1000, id, 'local'])
+    await client.query('COMMIT')
+    return true
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 export async function deleteTask(id: string) {
@@ -341,7 +373,9 @@ export type RestoreData = {
 
 export async function restoreData(data: RestoreData) {
   if (!postgresAvailable) {
-    localTasks = data.tasks; localEvents = data.events; localIdeas = data.ideas
+    localTasks = data.tasks.map((task, index) => ({ ...task, sortOrder: task.sortOrder ?? index * 1000 }))
+    localEvents = data.events
+    localIdeas = data.ideas
     await saveLocalTasks(); await saveCollection('events.json', localEvents); await saveCollection('ideas.json', localIdeas)
     return
   }
@@ -357,7 +391,7 @@ export async function restoreData(data: RestoreData) {
     await client.query('DELETE FROM movies WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM music_tracks WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM memory_entries WHERE user_id = $1', ['local'])
-    for (const task of [...data.tasks].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))) await client.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)', [task.id, 'local', task.parentId ?? null, task.summary, task.notes, task.completed, task.createdAt])
+    for (const task of [...data.tasks].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))) await client.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, due_date, priority, tags, list_name, sort_order, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)', [task.id, 'local', task.parentId ?? null, task.summary, task.notes, task.dueDate, task.priority, JSON.stringify(task.tags), task.listName, task.sortOrder ?? 0, task.completed, task.createdAt])
     for (const event of data.events) await client.query('INSERT INTO calendar_events (id, user_id, title, event_date, notes) VALUES ($1,$2,$3,$4,$5)', [event.id, 'local', event.title, event.date, event.notes])
     for (const idea of data.ideas) await client.query('INSERT INTO ideas (id, user_id, title, body, created_at) VALUES ($1,$2,$3,$4,$5)', [idea.id, 'local', idea.title, idea.body, idea.createdAt])
     for (const account of data.financialAccounts ?? []) await client.query('INSERT INTO financial_accounts (id, user_id, name, kind, currency, opening_balance_minor) VALUES ($1,$2,$3,$4,$5,$6)', [account.id, 'local', account.name, account.kind, account.currency, account.openingBalanceMinor])
