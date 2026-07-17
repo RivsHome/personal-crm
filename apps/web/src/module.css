@@ -941,20 +941,19 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .app-shell[data-theme="light"] .nav-link.active { color: var(--text); background: color-mix(in srgb, var(--accent) 17%, white); }
 
 @media (max-width: 680px) {
-  .sidebar { position: sticky; width: 100%; height: auto; padding: calc(11px + env(safe-area-inset-top)) 14px 10px; background: rgba(13, 16, 21, .94); }
-  .brand { justify-content: flex-start; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 9px; }
-  .brand small { display: none; }
-  .sidebar nav { display: flex; gap: 5px; background: rgba(13, 16, 21, .96); border-color: var(--border); }
+  .sidebar { position: sticky; top: 0; z-index: 40; width: 100%; height: auto; padding: 0; background: rgba(13, 16, 21, .94); }
+  .brand, .search, .account { display: none; }
+  .sidebar nav { display: flex; gap: 5px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; background: rgba(13, 16, 21, .96); border-color: var(--border); scrollbar-width: none; }
+  .sidebar nav::-webkit-scrollbar { display: none; }
   .nav-section { display: contents; }
   .sidebar nav p, .nav-empty { display: none; }
-  .nav-link { flex: 0 0 72px; min-height: 56px; display: grid; place-items: center; gap: 3px; padding: 6px; text-align: center; font-size: 10px; }
+  .nav-link { flex: 0 0 84px; min-height: 58px; display: grid; place-items: center; gap: 3px; padding: 6px; text-align: center; font-size: 10px; line-height: 1.1; scroll-snap-align: start; }
   .nav-link svg { width: 19px; height: 19px; }
   .nav-link.active { box-shadow: inset 0 2px var(--accent); }
   .active-dot { display: none; }
-  .content { padding: 22px 14px 12px; }
+  .content { padding: 18px 12px calc(12px + env(safe-area-inset-bottom)); }
   .page-header h1 { font-size: 29px; }
-  .panel { border-radius: 15px; }
+  .panel { padding: 17px; border-radius: 15px; }
   .segmented { width: 100%; }
   .segmented button { min-width: 0; }
   .app-shell[data-theme="light"] .sidebar nav { background: rgba(250, 251, 249, .97); }
@@ -1161,10 +1160,19 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .recovery-stats, .progression-fields { grid-template-columns: 1fr; }
   .gym-basics { grid-template-columns: 1fr; }
   .gym-basics label.wide { grid-column: auto; }
-  .exercise-editor-row { grid-template-columns: minmax(0, 1fr) 60px 72px 38px; }
-  .exercise-editor-row .exercise-name { grid-column: span 4; }
-  .exercise-editor-row .optional-check { align-self: center; }
+  .gym-editor input, .gym-editor textarea, .gym-editor select { min-height: 44px; font-size: 16px; }
+  .day-picker button, .workout-title .icon-button, .add-exercise, .manual-day-grid select { min-height: 44px; }
+  .cardio-field input { min-height: 44px; font-size: 16px; }
+  .exercise-editor-row { grid-template-columns: repeat(2, minmax(0, 1fr)) 44px; align-items: end; }
+  .exercise-editor-row .exercise-name { grid-column: 1 / -1; }
+  .exercise-editor-row > label:nth-of-type(1) { grid-column: 1; grid-row: 2; }
+  .exercise-editor-row > label:nth-of-type(2) { grid-column: 2; grid-row: 2; }
+  .exercise-editor-row .optional-check { grid-column: 1 / 3; grid-row: 3; align-self: center; }
+  .exercise-editor-row .icon-button { grid-column: 3; grid-row: 3; min-width: 44px; min-height: 44px; }
   .workout-card li { grid-template-columns: minmax(0, 1fr) 55px 65px; }
+  .week-pattern > div { overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 3px; scrollbar-width: none; }
+  .week-pattern > div::-webkit-scrollbar { display: none; }
+  .workout-chip { flex: 0 0 68px; }
   .calendar-sync-legend { justify-content: flex-start; }
   .calendar-sync-legend > small { display: none; }
   .gym-calendar-event { min-height: 16px; justify-content: center; padding: 1px; border-radius: 4px; }
@@ -1177,10 +1185,14 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .gym-hero .task-creator-toggle { width: 100%; }
   .gym-overview-actions { align-items: stretch; flex-direction: column; }
   .gym-delete { justify-content: center; }
+  .manual-day-grid { grid-template-columns: 1fr; }
+  .gym-editor-actions { align-items: stretch; flex-direction: column-reverse; gap: 10px; }
+  .gym-editor-actions .task-creator-toggle { width: 100%; min-height: 46px; }
   .week-pattern > div { gap: 5px; }
   .workout-chip { min-height: 52px; }
   .workout-card-header { padding: 15px; }
   .workout-card ol { padding-inline: 13px; }
+  .workout-card li { grid-template-columns: minmax(0, 1fr) 50px 58px; gap: 7px; }
 }
 
 /* Diet meal prep */
@@ -1273,13 +1285,22 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .meal-week-grid, .grocery-category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .diet-hero { align-items: flex-start; flex-direction: column; padding: 22px; }
+  .diet-workspace { gap: 14px; }
+  .diet-hero { align-items: flex-start; flex-direction: column; min-height: 0; padding: 20px; }
+  .diet-hero h2 { font-size: clamp(25px, 8vw, 34px); }
   .diet-hero-actions { width: 100%; justify-content: space-between; }
+  .diet-hero-actions .task-creator-toggle { min-height: 46px; }
+  .portion-grid article { min-height: 0; }
+  .meal-week-grid, .grocery-category-grid { grid-template-columns: 1fr; }
   .portion-grid, .diet-guidance, .diet-bottom-grid, .portion-edit-grid, .grocery-edit-grid, .meal-week-edit-grid, .amount-edit-grid, .diet-edit-columns { grid-template-columns: 1fr; }
+  .diet-editor input, .diet-editor textarea { min-height: 44px; font-size: 16px; }
+  .diet-editor textarea { min-height: 96px; }
+  .shopping-amount-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px) {
-  .meal-week-grid, .grocery-category-grid { grid-template-columns: 1fr; }
   .diet-hero-actions { align-items: stretch; flex-direction: column; }
   .diet-hero-actions .task-creator-toggle { width: 100%; }
+  .shopping-amount-grid { grid-template-columns: 1fr; }
   .amount-edit-grid > div { grid-template-columns: 1fr; }
+  .diet-editor-header { display: grid; }
 }
