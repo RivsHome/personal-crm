@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarDays, CheckSquare, ChevronDown, ChevronRight, CircleUserRound, Clapperboard, Download, Dumbbell, GripVertical, LayoutDashboard, LogOut, Music2, Pencil, Plus, Search, Settings, Sparkles, Target, Trash2, Utensils, WalletCards } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarDays, CheckSquare, ChevronDown, ChevronRight, CircleUserRound, Clapperboard, Download, Dumbbell, GripVertical, LayoutDashboard, LogOut, Menu, Music2, Pencil, Plus, Search, Settings, Sparkles, Target, Trash2, Utensils, WalletCards, X } from 'lucide-react'
 import './module.css'
 import GymModule, { type GymRoutine } from './GymModule'
 import DietModule from './DietModule'
@@ -136,6 +136,7 @@ function App() {
   const [subtaskParentId, setSubtaskParentId] = useState<string | null>(null)
   const [subtaskSummary, setSubtaskSummary] = useState('')
   const [view, setView] = useState<View>('dashboard')
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [moduleQuery, setModuleQuery] = useState('')
   const [events, setEvents] = useState<EventItem[]>([])
   const [ideas, setIdeas] = useState<Idea[]>([])
@@ -473,11 +474,19 @@ function App() {
     { label: 'Media', items: [{ id: 'movies', label: 'Movies', icon: Clapperboard }, { id: 'music', label: 'Music', icon: Music2 }] },
     { label: 'Workspace', items: [{ id: 'settings', label: 'Settings', icon: Settings }] }
   ]
-  const normalizedModuleQuery = moduleQuery.trim().toLowerCase()
-  const visibleNavSections = navSections.map(section => ({
+  const enabledNavSections = navSections.map(section => ({
     ...section,
-    items: section.items.filter(item => item.enabled !== false && (!normalizedModuleQuery || item.label.toLowerCase().includes(normalizedModuleQuery)))
+    items: section.items.filter(item => item.enabled !== false)
   })).filter(section => section.items.length > 0)
+  const normalizedModuleQuery = moduleQuery.trim().toLowerCase()
+  const visibleNavSections = enabledNavSections.map(section => ({
+    ...section,
+    items: section.items.filter(item => !normalizedModuleQuery || item.label.toLowerCase().includes(normalizedModuleQuery))
+  })).filter(section => section.items.length > 0)
+  const mobilePrimaryIds: View[] = ['dashboard', 'calendar', 'tasks', 'gym', 'diet']
+  const enabledNavItems = enabledNavSections.flatMap(section => section.items)
+  const mobilePrimaryItems = mobilePrimaryIds.map(id => enabledNavItems.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item))
+  const mobileMoreSections = enabledNavSections.map(section => ({ ...section, items: section.items.filter(item => !mobilePrimaryIds.includes(item.id)) })).filter(section => section.items.length > 0)
 
   return <div className="app-shell" data-theme={preferences?.theme ?? 'dark'} style={{ '--accent': preferences?.accent ?? '#c9f253' } as React.CSSProperties}>
     <aside className="sidebar">
@@ -529,6 +538,17 @@ function App() {
         {(!preferences || preferences.widgets.ideas) && <article className="panel notes-panel" style={{ order: preferences?.dashboardOrder.indexOf('ideas') ?? 2 }}><div className="panel-header"><div><span className="panel-kicker"><Sparkles size={15} /> CAPTURE</span><h2>Ideas</h2></div><button className="icon-button" onClick={() => setView('ideas')} title="Open ideas"><Plus size={17} /></button></div><div className="empty compact"><Sparkles size={28} /><p>{ideas.length ? `${ideas.length} idea${ideas.length === 1 ? '' : 's'} captured` : 'Nothing captured yet'}</p><small>{ideas.length ? 'Open the idea box to review your notes.' : 'Keep a thought before it gets away.'}</small></div></article>}
       </section>}
     </main>
+    <nav className='mobile-bottom-nav' aria-label='Mobile navigation'>
+      {mobilePrimaryItems.map(item => { const Icon = item.icon; return <button type='button' className={view === item.id ? 'active' : ''} aria-current={view === item.id ? 'page' : undefined} onClick={() => { setView(item.id); setModuleQuery(''); setMobileMenuOpen(false) }} key={item.id}><Icon size={20} /><span>{item.id === 'diet' ? 'Diet' : item.label}</span></button> })}
+      <button type='button' className={!mobilePrimaryIds.includes(view) ? 'active' : ''} aria-expanded={mobileMenuOpen} aria-controls='mobile-module-menu' onClick={() => setMobileMenuOpen(true)}><Menu size={20} /><span>More</span></button>
+    </nav>
+    {mobileMenuOpen && <div className='mobile-menu-backdrop' role='presentation' onClick={() => setMobileMenuOpen(false)}>
+      <section className='mobile-module-menu' id='mobile-module-menu' role='dialog' aria-modal='true' aria-label='All modules' onClick={event => event.stopPropagation()}>
+        <header><div><span>Workspace</span><h2>All modules</h2></div><button type='button' className='icon-button' onClick={() => setMobileMenuOpen(false)} aria-label='Close module menu'><X size={20} /></button></header>
+        <div className='mobile-module-groups'>{mobileMoreSections.map(section => <section key={section.label}><p>{section.label}</p><div>{section.items.map(item => { const Icon = item.icon; return <button type='button' className={view === item.id ? 'active' : ''} onClick={() => { setView(item.id); setModuleQuery(''); setMobileMenuOpen(false) }} key={item.id}><Icon size={19} /><span>{item.label}</span><ChevronRight size={15} /></button> })}</div></section>)}</div>
+        <button type='button' className='mobile-sign-out' onClick={() => void signOut()}><LogOut size={18} /> Sign out</button>
+      </section>
+    </div>}
   </div>
 }
 
