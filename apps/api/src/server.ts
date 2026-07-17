@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
-import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listIdeas, listMemories, listMovies, listMusic, listTasks, reorderTasks, restoreData, toggleGoal, toggleTask, updateEvent, updatePreferences, updateTask } from './db.js'
+import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createGymRoutine, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteGymRoutine, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listGymRoutines, listIdeas, listMemories, listMovies, listMusic, listTasks, reorderTasks, restoreData, toggleGoal, toggleTask, updateEvent, updateGymRoutine, updatePreferences, updateTask } from './db.js'
 import { changePassword, current, initializeAuth, login, logout, register } from './auth.js'
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
@@ -34,7 +34,7 @@ app.addHook('onRequest', async (request, reply) => {
 })
 
 app.addHook('preHandler', async (request, reply) => {
-  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
+  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/gym') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
   if (protectedPath && !current(request.cookies.session)) return reply.code(401).send({ error: 'Sign in required.' })
 })
 
@@ -56,6 +56,15 @@ const goalInput = z.object({ title: z.string().trim().min(1).max(240), targetMin
 const movieInput = z.object({ title: z.string().trim().min(1).max(240), year: z.number().int().min(1888).max(2200).nullable(), notes: z.string().max(5000).default('') })
 const musicInput = z.object({ title: z.string().trim().min(1).max(240), artist: z.string().max(160).default(''), album: z.string().max(160).default('') })
 const memoryInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default(''), occurredOn: z.string().date().nullable() })
+const gymExerciseInput = z.object({ id: z.string().min(1).max(80), name: z.string().trim().min(1).max(240), sets: z.string().trim().min(1).max(40), reps: z.string().trim().min(1).max(80), optional: z.boolean().default(false) })
+const gymRoutineInput = z.object({
+  name: z.string().trim().min(1).max(160),
+  description: z.string().max(2000).default(''),
+  trainingDays: z.array(z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])).min(1).max(7),
+  startDate: z.string().date(),
+  workouts: z.object({ A: z.array(gymExerciseInput).min(1).max(30), B: z.array(gymExerciseInput).min(1).max(30) }),
+  progression: z.object({ method: z.string().max(5000), restBigLifts: z.string().max(120), restAccessories: z.string().max(120), duration: z.string().max(120), rules: z.array(z.string().trim().min(1).max(500)).max(20) })
+})
 const loginCredentials = z.object({ email: z.string().email(), password: z.string().min(8).max(200) })
 const registrationCredentials = loginCredentials.extend({ name: z.string().trim().min(1).max(80) })
 const preferencesInput = z.object({ theme: z.enum(['dark', 'light']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), timezone: z.string().min(1).max(80).optional(), weekStart: z.enum(['sunday', 'monday']).optional(), modules: z.object({ calendar: z.boolean().optional(), tasks: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), widgets: z.object({ tasks: z.boolean().optional(), calendar: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), dashboardOrder: z.array(z.enum(['tasks', 'calendar', 'ideas'])).length(3).optional() })
@@ -68,7 +77,8 @@ const restoreInput = z.object({
   goals: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), targetMinor: z.number().int().positive().nullable(), currentMinor: z.number().int(), dueDate: z.string().date().nullable(), completed: z.boolean() })).optional().default([]),
   movies: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), year: z.number().int().nullable(), watched: z.boolean(), rating: z.number().int().nullable(), notes: z.string() })).optional().default([]),
   music: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), artist: z.string(), album: z.string(), listened: z.boolean() })).optional().default([]),
-  memories: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), occurredOn: z.string().date().nullable() })).optional().default([])
+  memories: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), occurredOn: z.string().date().nullable() })).optional().default([]),
+  gymRoutines: z.array(gymRoutineInput.extend({ id: z.string().uuid(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() })).optional().default([])
 })
 
 app.get('/api/auth/me', async request => ({ user: current(request.cookies.session) }))
@@ -255,6 +265,23 @@ app.post('/api/memories/:id/attachments', async (request, reply) => {
   const created = await createAttachment((request.params as { id: string }).id, filename, file.mimetype, storageKey, content.byteLength)
   if (!created) { await unlink(path.join(uploadDirectory, storageKey)); return reply.code(404).send({ error: 'Memory not found' }) }
   return reply.code(201).send(created)
+})
+app.get('/api/gym/routines', async () => listGymRoutines())
+app.post('/api/gym/routines', async (request, reply) => {
+  const parsed = gymRoutineInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid gym routine', issues: parsed.error.issues })
+  return reply.code(201).send(await createGymRoutine(parsed.data))
+})
+app.put('/api/gym/routines/:id', async (request, reply) => {
+  const parsed = gymRoutineInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Invalid gym routine', issues: parsed.error.issues })
+  const routine = await updateGymRoutine((request.params as { id: string }).id, parsed.data)
+  if (!routine) return reply.code(404).send({ error: 'Gym routine not found' })
+  return routine
+})
+app.delete('/api/gym/routines/:id', async (request, reply) => {
+  if (!await deleteGymRoutine((request.params as { id: string }).id)) return reply.code(404).send({ error: 'Gym routine not found' })
+  return reply.code(204).send()
 })
 app.get('/api/attachments/:id', async (request, reply) => {
   const attachment = await getAttachment((request.params as { id: string }).id)
