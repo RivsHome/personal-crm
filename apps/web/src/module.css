@@ -461,6 +461,32 @@ nav a { cursor: pointer; }
   color: #9b9da4;
 }
 
+.dashboard-calendar-panel { min-height: 300px; }
+.dashboard-week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; margin-top: 18px; }
+.dashboard-week-strip button { display: grid; place-items: center; gap: 4px; min-width: 0; min-height: 68px; padding: 7px 2px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: rgba(255, 255, 255, .022); cursor: pointer; }
+.dashboard-week-strip button:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.dashboard-week-strip button.today { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.dashboard-week-strip span { color: var(--text-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.dashboard-week-strip b { font-size: 15px; }
+.dashboard-week-strip button.today b { color: var(--accent); }
+.dashboard-week-strip i { display: flex; justify-content: center; gap: 3px; height: 4px; }
+.dashboard-week-strip em { width: 4px; height: 4px; border-radius: 50%; }
+.dashboard-week-strip .event-dot { background: var(--accent); }
+.dashboard-week-strip .gym-dot { background: #85b8ff; }
+.dashboard-combined-agenda { margin-top: 12px; gap: 0; }
+.dashboard-combined-agenda li { display: block; padding: 0; }
+.dashboard-combined-agenda li > button { width: 100%; display: grid; grid-template-columns: 32px minmax(0, 1fr) 16px; align-items: center; gap: 9px; padding: 9px 2px; border: 0; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+.dashboard-combined-agenda li > button:hover { background: rgba(255, 255, 255, .025); }
+.dashboard-combined-agenda li > button > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.dashboard-combined-agenda li > button > span:nth-child(2) b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.dashboard-combined-agenda li > button > span:nth-child(2) small { overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.dashboard-combined-agenda li > button > svg { color: var(--text-muted); }
+.dashboard-agenda-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; }
+.dashboard-agenda-icon.event { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.dashboard-agenda-icon.gym { color: #85b8ff; background: rgba(133, 184, 255, .08); }
+.dashboard-calendar-empty { min-height: 92px; display: grid; place-content: center; justify-items: center; gap: 7px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.dashboard-calendar-empty button { border: 0; color: var(--accent); background: transparent; cursor: pointer; }
+
 @media (max-width: 760px) {
   .module-workspace {
     margin-top: 16px;
@@ -626,6 +652,9 @@ nav a { cursor: pointer; }
   .dashboard-agenda {
     margin-top: 12px;
   }
+
+  .dashboard-week-strip { gap: 4px; }
+  .dashboard-week-strip button { min-height: 60px; }
 }
 
 @media (max-width: 420px) {
