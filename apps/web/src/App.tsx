@@ -90,7 +90,9 @@ function gymOccurrencesForDate(date: Date, routines: GymRoutine[]) {
     cycleAnchor.setDate(cycleAnchor.getDate() - ((cycleAnchor.getDay() + 6) % 7))
     const weekIndex = Math.floor((dateValue - cycleAnchor.getTime()) / (7 * 24 * 60 * 60 * 1000))
     const order = routine.workoutOrder?.length ? routine.workoutOrder : ['A', 'B']
-    const workout = order[(weekIndex * routine.trainingDays.length + dayIndex) % order.length]
+    const workout = routine.scheduleMode === 'manual'
+      ? routine.dayWorkouts?.[weekday] ?? order[dayIndex % order.length]
+      : order[(weekIndex * routine.trainingDays.length + dayIndex) % order.length]
     return [{ routineId: routine.id, routineName: routine.name, workout }]
   })
 }

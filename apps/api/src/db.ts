@@ -43,6 +43,8 @@ export type GymRoutine = {
   workoutOrder: WorkoutKey[]
   workouts: Record<WorkoutKey, GymExercise[]>
   cardioMinutes: Record<WorkoutKey, number>
+  scheduleMode: 'rotation' | 'manual'
+  dayWorkouts: Record<string, WorkoutKey>
   progression: { method: string; restBigLifts: string; restAccessories: string; duration: string; rules: string[] }
   createdAt: string
   updatedAt: string
@@ -88,12 +90,15 @@ function normalizeGymRoutine(row: Record<string, unknown>): GymRoutine {
   const workouts = row.workouts && typeof row.workouts === 'object' ? row.workouts as Partial<Record<WorkoutKey, GymExercise[]>> : {}
   const cardio = row.cardioMinutes && typeof row.cardioMinutes === 'object' ? row.cardioMinutes as Partial<Record<WorkoutKey, number>> : {}
   const order = Array.isArray(row.workoutOrder) ? row.workoutOrder.filter((key): key is WorkoutKey => ['A', 'B', 'C', 'D', 'E'].includes(String(key))) : []
+  const dayWorkouts = row.dayWorkouts && typeof row.dayWorkouts === 'object' ? row.dayWorkouts as Record<string, WorkoutKey> : {}
   return {
     ...row,
     startDate: dateOnly(row.startDate) ?? new Date().toISOString().slice(0, 10),
     workoutOrder: order.length >= 2 ? order : ['A', 'B'],
     workouts: { A: workouts.A ?? [], B: workouts.B ?? [], C: workouts.C ?? [], D: workouts.D ?? [], E: workouts.E ?? [] },
-    cardioMinutes: { A: Number(cardio.A ?? 0), B: Number(cardio.B ?? 0), C: Number(cardio.C ?? 0), D: Number(cardio.D ?? 0), E: Number(cardio.E ?? 0) }
+    cardioMinutes: { A: Number(cardio.A ?? 0), B: Number(cardio.B ?? 0), C: Number(cardio.C ?? 0), D: Number(cardio.D ?? 0), E: Number(cardio.E ?? 0) },
+    scheduleMode: row.scheduleMode === 'manual' ? 'manual' : 'rotation',
+    dayWorkouts
   } as GymRoutine
 }
 
@@ -126,6 +131,8 @@ export function defaultGymRoutineInput(): GymRoutineInput {
       C: [], D: [], E: []
     },
     cardioMinutes: { A: 0, B: 0, C: 0, D: 0, E: 0 },
+    scheduleMode: 'rotation',
+    dayWorkouts: { monday: 'A', wednesday: 'B', friday: 'A' },
     progression: {
       method: 'Use the listed rep range, then add weight once you hit the top end with good form. If you complete all 3 sets of 5 on bench press, add 5 lb next week. If you miss reps, keep the same weight until you earn it.',
       restBigLifts: '2–3 minutes',
@@ -325,7 +332,7 @@ export async function listGymRoutines(): Promise<GymRoutine[]> {
   let routines: GymRoutine[]
   if (!postgresAvailable) routines = localGymRoutines.map(routine => normalizeGymRoutine(routine as unknown as Record<string, unknown>))
   else {
-    const result = await pool.query(`SELECT id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workout_order AS "workoutOrder", workouts, cardio_minutes AS "cardioMinutes", progression,
+    const result = await pool.query(`SELECT id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workout_order AS "workoutOrder", workouts, cardio_minutes AS "cardioMinutes", schedule_mode AS "scheduleMode", day_workouts AS "dayWorkouts", progression,
       created_at AS "createdAt", updated_at AS "updatedAt" FROM gym_routines WHERE user_id = $1 ORDER BY updated_at DESC`, ['local'])
     routines = result.rows.map(normalizeGymRoutine)
   }
@@ -340,10 +347,10 @@ export async function createGymRoutine(input: GymRoutineInput): Promise<GymRouti
     await saveCollection('gym-routines.json', localGymRoutines)
     return routine
   }
-  const result = await pool.query(`INSERT INTO gym_routines (id, name, description, calendar_enabled, training_days, start_date, workout_order, workouts, cardio_minutes, progression)
-    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb)
-    RETURNING id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workout_order AS "workoutOrder", workouts, cardio_minutes AS "cardioMinutes", progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
-    [routine.id, input.name, input.description, input.calendarEnabled, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workoutOrder), JSON.stringify(input.workouts), JSON.stringify(input.cardioMinutes), JSON.stringify(input.progression)])
+  const result = await pool.query(`INSERT INTO gym_routines (id, name, description, calendar_enabled, training_days, start_date, workout_order, workouts, cardio_minutes, schedule_mode, day_workouts, progression)
+    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11::jsonb,$12::jsonb)
+    RETURNING id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workout_order AS "workoutOrder", workouts, cardio_minutes AS "cardioMinutes", schedule_mode AS "scheduleMode", day_workouts AS "dayWorkouts", progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [routine.id, input.name, input.description, input.calendarEnabled, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workoutOrder), JSON.stringify(input.workouts), JSON.stringify(input.cardioMinutes), input.scheduleMode, JSON.stringify(input.dayWorkouts), JSON.stringify(input.progression)])
   return normalizeGymRoutine(result.rows[0])
 }
 
@@ -356,9 +363,9 @@ export async function updateGymRoutine(id: string, input: GymRoutineInput): Prom
     return localGymRoutines[index]
   }
   const result = await pool.query(`UPDATE gym_routines SET name=$2, description=$3, calendar_enabled=$4, training_days=$5::jsonb, start_date=$6,
-    workout_order=$7::jsonb, workouts=$8::jsonb, cardio_minutes=$9::jsonb, progression=$10::jsonb, updated_at=NOW() WHERE id=$1 AND user_id='local'
-    RETURNING id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workout_order AS "workoutOrder", workouts, cardio_minutes AS "cardioMinutes", progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
-    [id, input.name, input.description, input.calendarEnabled, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workoutOrder), JSON.stringify(input.workouts), JSON.stringify(input.cardioMinutes), JSON.stringify(input.progression)])
+    workout_order=$7::jsonb, workouts=$8::jsonb, cardio_minutes=$9::jsonb, schedule_mode=$10, day_workouts=$11::jsonb, progression=$12::jsonb, updated_at=NOW() WHERE id=$1 AND user_id='local'
+    RETURNING id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workout_order AS "workoutOrder", workouts, cardio_minutes AS "cardioMinutes", schedule_mode AS "scheduleMode", day_workouts AS "dayWorkouts", progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [id, input.name, input.description, input.calendarEnabled, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workoutOrder), JSON.stringify(input.workouts), JSON.stringify(input.cardioMinutes), input.scheduleMode, JSON.stringify(input.dayWorkouts), JSON.stringify(input.progression)])
   return result.rows[0] ? normalizeGymRoutine(result.rows[0]) : null
 }
 
@@ -531,8 +538,8 @@ export async function restoreData(data: RestoreData) {
     for (const movie of data.movies ?? []) await client.query('INSERT INTO movies (id, user_id, title, year, watched, rating, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)', [movie.id, 'local', movie.title, movie.year, movie.watched, movie.rating, movie.notes])
     for (const track of data.music ?? []) await client.query('INSERT INTO music_tracks (id, user_id, title, artist, album, listened) VALUES ($1,$2,$3,$4,$5,$6)', [track.id, 'local', track.title, track.artist, track.album, track.listened])
     for (const memory of data.memories ?? []) await client.query('INSERT INTO memory_entries (id, user_id, title, body, occurred_on) VALUES ($1,$2,$3,$4,$5)', [memory.id, 'local', memory.title, memory.body, memory.occurredOn])
-    for (const routine of data.gymRoutines ?? []) await client.query(`INSERT INTO gym_routines (id, user_id, name, description, calendar_enabled, training_days, start_date, workout_order, workouts, cardio_minutes, progression, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)`, [routine.id, 'local', routine.name, routine.description, routine.calendarEnabled ?? true, JSON.stringify(routine.trainingDays), routine.startDate, JSON.stringify(routine.workoutOrder ?? ['A', 'B']), JSON.stringify(routine.workouts), JSON.stringify(routine.cardioMinutes ?? {}), JSON.stringify(routine.progression), routine.createdAt, routine.updatedAt])
+    for (const routine of data.gymRoutines ?? []) await client.query(`INSERT INTO gym_routines (id, user_id, name, description, calendar_enabled, training_days, start_date, workout_order, workouts, cardio_minutes, schedule_mode, day_workouts, progression, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15)`, [routine.id, 'local', routine.name, routine.description, routine.calendarEnabled ?? true, JSON.stringify(routine.trainingDays), routine.startDate, JSON.stringify(routine.workoutOrder ?? ['A', 'B']), JSON.stringify(routine.workouts), JSON.stringify(routine.cardioMinutes ?? {}), routine.scheduleMode ?? 'rotation', JSON.stringify(routine.dayWorkouts ?? {}), JSON.stringify(routine.progression), routine.createdAt, routine.updatedAt])
     await client.query('COMMIT')
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }

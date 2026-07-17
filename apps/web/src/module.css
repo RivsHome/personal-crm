@@ -1049,6 +1049,10 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .cardio-summary { display: flex; align-items: center; gap: 9px; margin: 0 18px 16px; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border)); border-radius: 10px; color: var(--text-soft); background: color-mix(in srgb, var(--accent) 5%, transparent); font-size: 12px; }
 .cardio-summary svg { color: var(--accent); }
 .cardio-summary b { color: var(--text); }
+.cardio-only-card { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 96px; margin: 14px 18px; padding: 16px; border: 1px dashed var(--border-strong); border-radius: 11px; color: var(--text-muted); text-align: left; }
+.cardio-only-card svg { color: var(--accent); }
+.cardio-only-card span { display: grid; gap: 3px; }
+.cardio-only-card b { color: var(--text-soft); font-size: 13px; }
 
 .progression-card { min-height: 0; }
 .progression-copy { max-width: 920px; margin: 17px 0 0; color: var(--text-soft); line-height: 1.7; }
@@ -1086,14 +1090,22 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .calendar-sync-toggle b { color: var(--text); font-size: 13px; }
 .calendar-sync-toggle small { color: var(--text-muted); font-size: 11px; }
 .gym-editor .calendar-sync-toggle > input { width: 38px; height: 20px; flex: none; accent-color: var(--accent); }
-.gym-editor input, .gym-editor textarea { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; color: var(--text); background: rgba(255, 255, 255, .04); outline: 0; }
+.gym-editor input, .gym-editor textarea, .gym-editor select { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; color: var(--text); background: var(--surface-raised); outline: 0; }
 .gym-editor textarea { min-height: 86px; resize: vertical; line-height: 1.5; }
-.gym-editor input:focus, .gym-editor textarea:focus { border-color: color-mix(in srgb, var(--accent) 58%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent); }
+.gym-editor input:focus, .gym-editor textarea:focus, .gym-editor select:focus { border-color: color-mix(in srgb, var(--accent) 58%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent); }
 .gym-edit-section { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--border); }
 .gym-edit-section h3 { margin: 6px 0 0; }
 .day-picker { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 .day-picker button { min-width: 54px; min-height: 38px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: rgba(255, 255, 255, .025); cursor: pointer; }
 .day-picker button.selected { color: #10130b; border-color: var(--accent); background: var(--accent); }
+.schedule-mode-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 15px; }
+.schedule-mode-picker button { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid var(--border); border-radius: 11px; color: var(--text-soft); background: rgba(255, 255, 255, .02); text-align: left; cursor: pointer; }
+.schedule-mode-picker button.selected { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.schedule-mode-picker b { color: var(--text); font-size: 13px; }
+.schedule-mode-picker button.selected b { color: var(--accent); }
+.schedule-mode-picker small { color: var(--text-muted); }
+.manual-day-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; margin-top: 11px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255, 255, 255, .018); }
+.manual-day-grid label { display: grid; gap: 6px; color: var(--text-soft); font-size: 11px; }
 .workout-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 22px; }
 .workout-editor { overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: rgba(255, 255, 255, .018); }
 .workout-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 15px; border-bottom: 1px solid var(--border); }
@@ -1104,6 +1116,11 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .cardio-field > span { display: flex; align-items: center; gap: 7px; }
 .cardio-field svg { color: var(--accent); }
 .gym-editor .cardio-field input { width: 76px; padding: 7px 8px; }
+.empty-exercise-list { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 82px; padding: 14px; color: var(--text-muted); text-align: left; }
+.empty-exercise-list svg { color: var(--accent); }
+.empty-exercise-list span { display: grid; gap: 3px; }
+.empty-exercise-list b { color: var(--text-soft); font-size: 12px; }
+.empty-exercise-list small { max-width: 290px; line-height: 1.35; }
 .exercise-editor-row { display: grid; grid-template-columns: minmax(160px, 1fr) 58px 70px auto 38px; align-items: end; gap: 7px; padding: 11px 12px; border-bottom: 1px solid var(--border); }
 .exercise-editor-row input { padding: 8px; }
 .exercise-editor-row .optional-check { display: flex; align-items: center; min-height: 37px; white-space: nowrap; }
@@ -1118,7 +1135,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .gym-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
 
 .app-shell[data-theme="light"] .gym-hero, .app-shell[data-theme="light"] .workout-card, .app-shell[data-theme="light"] .routine-tabs button { background-color: var(--surface); }
-.app-shell[data-theme="light"] .gym-editor input, .app-shell[data-theme="light"] .gym-editor textarea { background: rgba(21, 28, 23, .035); }
+.app-shell[data-theme="light"] .gym-editor input, .app-shell[data-theme="light"] .gym-editor textarea, .app-shell[data-theme="light"] .gym-editor select { background: rgba(21, 28, 23, .035); }
 
 @media (max-width: 1050px) {
   .workout-editor-grid { grid-template-columns: 1fr; }
@@ -1130,6 +1147,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .gym-overview { grid-template-columns: 1fr; }
   .cycle-card { min-height: 105px; }
   .week-patterns, .gym-workout-grid { grid-template-columns: 1fr; }
+  .schedule-mode-picker { grid-template-columns: 1fr; }
   .section-heading { display: grid; }
   .schedule-days { width: fit-content; }
   .recovery-stats, .progression-fields { grid-template-columns: 1fr; }

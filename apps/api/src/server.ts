@@ -66,8 +66,10 @@ const gymRoutineInput = z.object({
   trainingDays: z.array(z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])).min(1).max(7),
   startDate: z.string().date(),
   workoutOrder: z.array(workoutKeyInput).min(2).max(5).refine(order => new Set(order).size === order.length, 'Workouts cannot repeat in the rotation.').optional().default(['A', 'B']),
-  workouts: z.object({ A: z.array(gymExerciseInput).min(1).max(30), B: z.array(gymExerciseInput).min(1).max(30), C: z.array(gymExerciseInput).max(30).default([]), D: z.array(gymExerciseInput).max(30).default([]), E: z.array(gymExerciseInput).max(30).default([]) }),
+  workouts: z.object({ A: z.array(gymExerciseInput).max(30), B: z.array(gymExerciseInput).max(30), C: z.array(gymExerciseInput).max(30).default([]), D: z.array(gymExerciseInput).max(30).default([]), E: z.array(gymExerciseInput).max(30).default([]) }),
   cardioMinutes: z.object({ A: cardioMinutesInput, B: cardioMinutesInput, C: cardioMinutesInput, D: cardioMinutesInput, E: cardioMinutesInput }).optional().default({ A: 0, B: 0, C: 0, D: 0, E: 0 }),
+  scheduleMode: z.enum(['rotation', 'manual']).optional().default('rotation'),
+  dayWorkouts: z.record(z.string(), workoutKeyInput).optional().default({}),
   progression: z.object({ method: z.string().max(5000), restBigLifts: z.string().max(120), restAccessories: z.string().max(120), duration: z.string().max(120), rules: z.array(z.string().trim().min(1).max(500)).max(20) })
 })
 const loginCredentials = z.object({ email: z.string().email(), password: z.string().min(8).max(200) })
