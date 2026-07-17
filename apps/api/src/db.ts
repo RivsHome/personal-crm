@@ -36,6 +36,7 @@ export type GymRoutine = {
   id: string
   name: string
   description: string
+  calendarEnabled: boolean
   trainingDays: string[]
   startDate: string
   workouts: { A: GymExercise[]; B: GymExercise[] }
@@ -89,6 +90,7 @@ export function defaultGymRoutineInput(): GymRoutineInput {
   return {
     name: 'Strength & Size A/B',
     description: 'A focused three-day strength routine that alternates Workout A and Workout B each week.',
+    calendarEnabled: true,
     trainingDays: ['monday', 'wednesday', 'friday'],
     startDate: new Date().toISOString().slice(0, 10),
     workouts: {
@@ -308,7 +310,7 @@ export async function listGymRoutines(): Promise<GymRoutine[]> {
   let routines: GymRoutine[]
   if (!postgresAvailable) routines = localGymRoutines
   else {
-    const result = await pool.query(`SELECT id, name, description, training_days AS "trainingDays", start_date AS "startDate", workouts, progression,
+    const result = await pool.query(`SELECT id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workouts, progression,
       created_at AS "createdAt", updated_at AS "updatedAt" FROM gym_routines WHERE user_id = $1 ORDER BY updated_at DESC`, ['local'])
     routines = result.rows.map(normalizeGymRoutine)
   }
@@ -323,10 +325,10 @@ export async function createGymRoutine(input: GymRoutineInput): Promise<GymRouti
     await saveCollection('gym-routines.json', localGymRoutines)
     return routine
   }
-  const result = await pool.query(`INSERT INTO gym_routines (id, name, description, training_days, start_date, workouts, progression)
-    VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7::jsonb)
-    RETURNING id, name, description, training_days AS "trainingDays", start_date AS "startDate", workouts, progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
-    [routine.id, input.name, input.description, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workouts), JSON.stringify(input.progression)])
+  const result = await pool.query(`INSERT INTO gym_routines (id, name, description, calendar_enabled, training_days, start_date, workouts, progression)
+    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb)
+    RETURNING id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workouts, progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [routine.id, input.name, input.description, input.calendarEnabled, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workouts), JSON.stringify(input.progression)])
   return normalizeGymRoutine(result.rows[0])
 }
 
@@ -338,10 +340,10 @@ export async function updateGymRoutine(id: string, input: GymRoutineInput): Prom
     await saveCollection('gym-routines.json', localGymRoutines)
     return localGymRoutines[index]
   }
-  const result = await pool.query(`UPDATE gym_routines SET name=$2, description=$3, training_days=$4::jsonb, start_date=$5,
-    workouts=$6::jsonb, progression=$7::jsonb, updated_at=NOW() WHERE id=$1 AND user_id='local'
-    RETURNING id, name, description, training_days AS "trainingDays", start_date AS "startDate", workouts, progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
-    [id, input.name, input.description, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workouts), JSON.stringify(input.progression)])
+  const result = await pool.query(`UPDATE gym_routines SET name=$2, description=$3, calendar_enabled=$4, training_days=$5::jsonb, start_date=$6,
+    workouts=$7::jsonb, progression=$8::jsonb, updated_at=NOW() WHERE id=$1 AND user_id='local'
+    RETURNING id, name, description, calendar_enabled AS "calendarEnabled", training_days AS "trainingDays", start_date AS "startDate", workouts, progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [id, input.name, input.description, input.calendarEnabled, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workouts), JSON.stringify(input.progression)])
   return result.rows[0] ? normalizeGymRoutine(result.rows[0]) : null
 }
 
@@ -514,8 +516,8 @@ export async function restoreData(data: RestoreData) {
     for (const movie of data.movies ?? []) await client.query('INSERT INTO movies (id, user_id, title, year, watched, rating, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)', [movie.id, 'local', movie.title, movie.year, movie.watched, movie.rating, movie.notes])
     for (const track of data.music ?? []) await client.query('INSERT INTO music_tracks (id, user_id, title, artist, album, listened) VALUES ($1,$2,$3,$4,$5,$6)', [track.id, 'local', track.title, track.artist, track.album, track.listened])
     for (const memory of data.memories ?? []) await client.query('INSERT INTO memory_entries (id, user_id, title, body, occurred_on) VALUES ($1,$2,$3,$4,$5)', [memory.id, 'local', memory.title, memory.body, memory.occurredOn])
-    for (const routine of data.gymRoutines ?? []) await client.query(`INSERT INTO gym_routines (id, user_id, name, description, training_days, start_date, workouts, progression, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb,$9,$10)`, [routine.id, 'local', routine.name, routine.description, JSON.stringify(routine.trainingDays), routine.startDate, JSON.stringify(routine.workouts), JSON.stringify(routine.progression), routine.createdAt, routine.updatedAt])
+    for (const routine of data.gymRoutines ?? []) await client.query(`INSERT INTO gym_routines (id, user_id, name, description, calendar_enabled, training_days, start_date, workouts, progression, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10,$11)`, [routine.id, 'local', routine.name, routine.description, routine.calendarEnabled ?? true, JSON.stringify(routine.trainingDays), routine.startDate, JSON.stringify(routine.workouts), JSON.stringify(routine.progression), routine.createdAt, routine.updatedAt])
     await client.query('COMMIT')
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }

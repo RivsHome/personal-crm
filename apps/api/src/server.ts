@@ -60,6 +60,7 @@ const gymExerciseInput = z.object({ id: z.string().min(1).max(80), name: z.strin
 const gymRoutineInput = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().max(2000).default(''),
+  calendarEnabled: z.boolean().optional().default(true),
   trainingDays: z.array(z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])).min(1).max(7),
   startDate: z.string().date(),
   workouts: z.object({ A: z.array(gymExerciseInput).min(1).max(30), B: z.array(gymExerciseInput).min(1).max(30) }),

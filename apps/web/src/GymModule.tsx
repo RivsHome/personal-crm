@@ -5,6 +5,7 @@ export type GymExercise = { id: string; name: string; sets: string; reps: string
 export type GymRoutineInput = {
   name: string
   description: string
+  calendarEnabled: boolean
   trainingDays: string[]
   startDate: string
   workouts: { A: GymExercise[]; B: GymExercise[] }
@@ -20,6 +21,7 @@ function blankRoutine(): GymRoutineInput {
   return {
     name: 'New routine',
     description: 'Describe the focus of this training plan.',
+    calendarEnabled: true,
     trainingDays: ['monday', 'wednesday', 'friday'],
     startDate: new Date().toISOString().slice(0, 10),
     workouts: { A: [exercise()], B: [exercise()] },
@@ -36,11 +38,12 @@ function blankRoutine(): GymRoutineInput {
 function cycleWeek(startDate: string) {
   const start = new Date(`${startDate}T12:00:00`)
   if (Number.isNaN(start.getTime())) return 1
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
   const elapsed = Math.max(0, Date.now() - start.getTime())
   return Math.floor(elapsed / (7 * 24 * 60 * 60 * 1000)) % 2 + 1
 }
 
-export default function GymModule({ request }: { request: (path: string, init?: RequestInit) => Promise<Response> }) {
+export default function GymModule({ request, onRoutinesChange }: { request: (path: string, init?: RequestInit) => Promise<Response>; onRoutinesChange?: (routines: GymRoutine[]) => void }) {
   const [routines, setRoutines] = useState<GymRoutine[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState<GymRoutineInput | null>(null)
@@ -55,9 +58,10 @@ export default function GymModule({ request }: { request: (path: string, init?: 
       if (!response.ok) throw new Error('Unable to load routines')
       const loaded = await response.json() as GymRoutine[]
       setRoutines(loaded)
+      onRoutinesChange?.(loaded)
       setSelectedId(loaded[0]?.id ?? '')
     }).catch(() => setMessage('Could not load your gym routines.')).finally(() => setLoading(false))
-  }, [request])
+  }, [request, onRoutinesChange])
 
   const selected = routines.find(routine => routine.id === selectedId) ?? routines[0]
   const currentCycleWeek = useMemo(() => selected ? cycleWeek(selected.startDate) : 1, [selected])
@@ -93,7 +97,9 @@ export default function GymModule({ request }: { request: (path: string, init?: 
     })
     if (response.ok) {
       const saved = await response.json() as GymRoutine
-      setRoutines(current => isNew ? [saved, ...current] : current.map(routine => routine.id === saved.id ? saved : routine))
+      const nextRoutines = isNew ? [saved, ...routines] : routines.map(routine => routine.id === saved.id ? saved : routine)
+      setRoutines(nextRoutines)
+      onRoutinesChange?.(nextRoutines)
       setSelectedId(saved.id)
       setDraft(null)
       setEditingId(null)
@@ -109,6 +115,7 @@ export default function GymModule({ request }: { request: (path: string, init?: 
     if (response.ok) {
       const remaining = routines.filter(routine => routine.id !== selected.id)
       setRoutines(remaining)
+      onRoutinesChange?.(remaining)
       setSelectedId(remaining[0]?.id ?? '')
       setDeleteArmed(false)
       setMessage('Routine deleted.')
@@ -148,7 +155,7 @@ export default function GymModule({ request }: { request: (path: string, init?: 
 
     {draft ? <form className="gym-editor panel" onSubmit={saveRoutine}>
       <div className="gym-editor-header"><div><span className="panel-kicker"><Pencil size={15} /> {editingId === 'new' ? 'NEW ROUTINE' : 'EDIT ROUTINE'}</span><h2>{editingId === 'new' ? 'Build your routine' : `Editing ${draft.name}`}</h2></div><button type="button" className="icon-button" onClick={cancelEdit} aria-label="Close editor"><X size={18} /></button></div>
-      <div className="gym-basics"><label>Routine name<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required /></label><label>Cycle start date<input type="date" value={draft.startDate} onChange={event => setDraft({ ...draft, startDate: event.target.value })} required /></label><label className="wide">Description<textarea value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label></div>
+      <div className="gym-basics"><label>Routine name<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required /></label><label>Cycle start date<input type="date" value={draft.startDate} onChange={event => setDraft({ ...draft, startDate: event.target.value })} required /></label><label className="wide">Description<textarea value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label><label className="calendar-sync-toggle wide"><span><CalendarRange size={17} /><span><b>Show on main calendar</b><small>Add subtle recurring workout markers to your monthly calendar.</small></span></span><input type="checkbox" checked={draft.calendarEnabled} onChange={event => setDraft({ ...draft, calendarEnabled: event.target.checked })} /></label></div>
       <div className="gym-edit-section"><div><span className="panel-kicker"><CalendarRange size={15} /> SCHEDULE</span><h3>Training days</h3></div><div className="day-picker">{days.map(day => <button type="button" key={day} className={draft.trainingDays.includes(day) ? 'selected' : ''} onClick={() => toggleDay(day)}>{dayLabel(day)}</button>)}</div></div>
       <div className="workout-editor-grid">{(['A', 'B'] as const).map(workout => <section className="workout-editor" key={workout}><div className="workout-title"><span>Workout {workout}</span><b>{draft.workouts[workout].length} exercises</b></div>{draft.workouts[workout].map(item => <div className="exercise-editor-row" key={item.id}><input className="exercise-name" value={item.name} onChange={event => updateExercise(workout, item.id, { name: event.target.value })} aria-label={`Workout ${workout} exercise name`} required /><label>Sets<input value={item.sets} onChange={event => updateExercise(workout, item.id, { sets: event.target.value })} required /></label><label>Reps<input value={item.reps} onChange={event => updateExercise(workout, item.id, { reps: event.target.value })} required /></label><label className="optional-check"><input type="checkbox" checked={item.optional} onChange={event => updateExercise(workout, item.id, { optional: event.target.checked })} /> Optional</label><button type="button" className="icon-button" onClick={() => removeExercise(workout, item.id)} disabled={draft.workouts[workout].length === 1} aria-label={`Remove ${item.name}`}><Trash2 size={15} /></button></div>)}<button type="button" className="add-exercise" onClick={() => setDraft({ ...draft, workouts: { ...draft.workouts, [workout]: [...draft.workouts[workout], exercise()] } })}><Plus size={15} /> Add exercise</button></section>)}</div>
       <div className="gym-edit-section progression-editor"><div><span className="panel-kicker"><TrendingUp size={15} /> PROGRESSION</span><h3>Progression and recovery</h3></div><label>Progression method<textarea value={draft.progression.method} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, method: event.target.value } })} /></label><div className="progression-fields"><label>Big lift rest<input value={draft.progression.restBigLifts} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, restBigLifts: event.target.value } })} /></label><label>Accessory rest<input value={draft.progression.restAccessories} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, restAccessories: event.target.value } })} /></label><label>Workout duration<input value={draft.progression.duration} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, duration: event.target.value } })} /></label></div><label>Year-round rules<textarea value={draft.progression.rules.join('\n')} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, rules: event.target.value.split('\n').map(rule => rule.trim()).filter(Boolean) } })} placeholder="One rule per line" /></label></div>
