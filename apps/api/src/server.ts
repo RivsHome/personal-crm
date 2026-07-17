@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
-import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createGymRoutine, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteGymRoutine, deleteTask, exportData, getAttachment, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listGymRoutines, listIdeas, listMemories, listMovies, listMusic, listTasks, reorderTasks, restoreData, toggleGoal, toggleTask, updateEvent, updateGymRoutine, updatePreferences, updateTask } from './db.js'
+import { createAttachment, createEvent, createFinancialAccount, createFinancialTransaction, createGoal, createGymRoutine, createIdea, createMemory, createMovie, createMusic, createTask, databaseReady, deleteAttachment, deleteEvent, deleteGymRoutine, deleteTask, exportData, getAttachment, getDietPlan, getPreferences, initializeDatabase, listAttachments, listEvents, listFinancialAccounts, listFinancialTransactions, listGoals, listGymRoutines, listIdeas, listMemories, listMovies, listMusic, listTasks, reorderTasks, restoreData, toggleGoal, toggleTask, updateDietPlan, updateEvent, updateGymRoutine, updatePreferences, updateTask } from './db.js'
 import { changePassword, current, initializeAuth, login, logout, register } from './auth.js'
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
@@ -34,7 +34,7 @@ app.addHook('onRequest', async (request, reply) => {
 })
 
 app.addHook('preHandler', async (request, reply) => {
-  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/gym') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
+  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/gym') || request.url.startsWith('/api/diet') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
   if (protectedPath && !current(request.cookies.session)) return reply.code(401).send({ error: 'Sign in required.' })
 })
 
@@ -72,6 +72,16 @@ const gymRoutineInput = z.object({
   dayWorkouts: z.record(z.string(), workoutKeyInput).optional().default({}),
   progression: z.object({ method: z.string().max(5000), restBigLifts: z.string().max(120), restAccessories: z.string().max(120), duration: z.string().max(120), rules: z.array(z.string().trim().min(1).max(500)).max(20) })
 })
+const dietPlanInput = z.object({
+  name: z.string().trim().min(1).max(160),
+  portionGuide: z.array(z.object({ label: z.string().trim().min(1).max(80), amount: z.string().trim().min(1).max(500) })).min(1).max(20),
+  guidance: z.array(z.string().trim().min(1).max(1000)).max(20),
+  weeks: z.array(z.object({ week: z.number().int().min(1).max(52), breakfast: z.string().max(500), lunch: z.string().max(500), dinner: z.string().max(500), snack: z.string().max(500) })).min(1).max(12),
+  groceries: z.array(z.object({ category: z.string().trim().min(1).max(100), items: z.array(z.string().trim().min(1).max(200)).max(100) })).min(1).max(20),
+  shoppingAmounts: z.array(z.object({ item: z.string().trim().min(1).max(100), amount: z.string().trim().min(1).max(200) })).max(100),
+  prepSteps: z.array(z.string().trim().min(1).max(500)).max(50),
+  repeatRules: z.array(z.string().trim().min(1).max(500)).max(50)
+})
 const loginCredentials = z.object({ email: z.string().email(), password: z.string().min(8).max(200) })
 const registrationCredentials = loginCredentials.extend({ name: z.string().trim().min(1).max(80) })
 const preferencesInput = z.object({ theme: z.enum(['dark', 'light']).optional(), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), timezone: z.string().min(1).max(80).optional(), weekStart: z.enum(['sunday', 'monday']).optional(), modules: z.object({ calendar: z.boolean().optional(), tasks: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), widgets: z.object({ tasks: z.boolean().optional(), calendar: z.boolean().optional(), ideas: z.boolean().optional() }).optional(), dashboardOrder: z.array(z.enum(['tasks', 'calendar', 'ideas'])).length(3).optional() })
@@ -85,7 +95,8 @@ const restoreInput = z.object({
   movies: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), year: z.number().int().nullable(), watched: z.boolean(), rating: z.number().int().nullable(), notes: z.string() })).optional().default([]),
   music: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), artist: z.string(), album: z.string(), listened: z.boolean() })).optional().default([]),
   memories: z.array(z.object({ id: z.string().uuid(), title: z.string().min(1).max(240), body: z.string(), occurredOn: z.string().date().nullable() })).optional().default([]),
-  gymRoutines: z.array(gymRoutineInput.extend({ id: z.string().uuid(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() })).optional().default([])
+  gymRoutines: z.array(gymRoutineInput.extend({ id: z.string().uuid(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() })).optional().default([]),
+  dietPlan: dietPlanInput.extend({ id: z.string().uuid(), updatedAt: z.string().datetime() }).optional()
 })
 
 app.get('/api/auth/me', async request => ({ user: current(request.cookies.session) }))
@@ -289,6 +300,12 @@ app.put('/api/gym/routines/:id', async (request, reply) => {
 app.delete('/api/gym/routines/:id', async (request, reply) => {
   if (!await deleteGymRoutine((request.params as { id: string }).id)) return reply.code(404).send({ error: 'Gym routine not found' })
   return reply.code(204).send()
+})
+app.get('/api/diet/plan', async () => getDietPlan())
+app.put('/api/diet/plan', async (request, reply) => {
+  const parsed = dietPlanInput.safeParse(request.body)
+  if (!parsed.success) return reply.code(400).send({ error: 'Check the meal plan fields and try again.' })
+  return updateDietPlan(parsed.data)
 })
 app.get('/api/attachments/:id', async (request, reply) => {
   const attachment = await getAttachment((request.params as { id: string }).id)
