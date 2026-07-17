@@ -50,6 +50,19 @@ export type GymRoutine = {
   updatedAt: string
 }
 export type GymRoutineInput = Omit<GymRoutine, 'id' | 'createdAt' | 'updatedAt'>
+export type DietPlan = {
+  id: string
+  name: string
+  portionGuide: Array<{ label: string; amount: string }>
+  guidance: string[]
+  weeks: Array<{ week: number; breakfast: string; lunch: string; dinner: string; snack: string }>
+  groceries: Array<{ category: string; items: string[] }>
+  shoppingAmounts: Array<{ item: string; amount: string }>
+  prepSteps: string[]
+  repeatRules: string[]
+  updatedAt: string
+}
+export type DietPlanInput = Omit<DietPlan, 'id' | 'updatedAt'>
 export type Preferences = {
   theme: 'dark' | 'light'
   accent: string
@@ -66,6 +79,7 @@ let localTasks: TaskRecord[] = []
 let localEvents: EventRecord[] = []
 let localIdeas: IdeaRecord[] = []
 let localGymRoutines: GymRoutine[] = []
+let localDietPlan: DietPlan | null = null
 let localPreferences: Preferences = {
   theme: 'dark', accent: '#c9f253', timezone: 'America/New_York', weekStart: 'sunday',
   modules: { calendar: true, tasks: true, ideas: true }, widgets: { tasks: true, calendar: true, ideas: true }, dashboardOrder: ['tasks', 'calendar', 'ideas']
@@ -148,6 +162,44 @@ export function defaultGymRoutineInput(): GymRoutineInput {
   }
 }
 
+export function defaultDietPlanInput(): DietPlanInput {
+  return {
+    name: 'Muscle Gain Meal Prep',
+    portionGuide: [
+      { label: 'Protein', amount: '30–40 g per meal' },
+      { label: 'Carbs', amount: '1–2 cups cooked per meal, a little more on lifting days' },
+      { label: 'Veggies', amount: '1–2 cups per meal' },
+      { label: 'Fats', amount: '1–2 thumbs per meal from olive oil, peanut butter, eggs, avocado, or cheese' },
+      { label: 'Snacks', amount: '1 protein shake or 1 high-protein snack per day' }
+    ],
+    guidance: [
+      'To gain muscle faster, bump up carbs a bit, especially around workouts.',
+      'To lose fat too, keep protein the same and slightly reduce carb portions on rest days.'
+    ],
+    weeks: [
+      { week: 1, breakfast: 'Protein oats + banana + peanut butter', lunch: 'Chicken pasta bowl with broccoli', dinner: 'Chicken rice bowl with vegetables', snack: 'Protein shake + Greek yogurt' },
+      { week: 2, breakfast: 'Greek yogurt + oats + berries', lunch: 'Turkey pasta bowl with peppers and onions', dinner: 'Turkey potato bowl with broccoli', snack: 'Protein shake + fruit' },
+      { week: 3, breakfast: 'Protein oats + berries', lunch: 'Chicken rice bowl with vegetables', dinner: 'Salmon pasta bowl with salad or broccoli', snack: 'Protein shake + cottage cheese' },
+      { week: 4, breakfast: 'Greek yogurt bowl with fruit and oats', lunch: 'Beef pasta bowl with tomato sauce and broccoli', dinner: 'Beef or chicken potato bowl with vegetables', snack: 'Protein shake + fruit' }
+    ],
+    groceries: [
+      { category: 'Proteins', items: ['Chicken breast or thighs', 'Ground turkey', 'Lean ground beef', 'Salmon or tuna', 'Whey protein', 'Greek yogurt', 'Cottage cheese', 'Eggs'] },
+      { category: 'Carbs', items: ['Pasta', 'Rice', 'Oats', 'Potatoes or sweet potatoes', 'Bananas', 'Berries', 'Apples'] },
+      { category: 'Vegetables', items: ['Broccoli', 'Peppers', 'Onions', 'Green beans', 'Mixed vegetables', 'Asparagus', 'Salad greens'] },
+      { category: 'Fats and extras', items: ['Peanut butter', 'Olive oil', 'Avocados', 'Salsa', 'Tomato sauce or marinara', 'Garlic powder', 'Salt', 'Pepper', 'Italian seasoning'] }
+    ],
+    shoppingAmounts: [
+      { item: 'Chicken', amount: '4–6 lb' }, { item: 'Ground turkey', amount: '2–3 lb' }, { item: 'Lean beef', amount: '2–3 lb' },
+      { item: 'Fish', amount: '1–2 lb' }, { item: 'Greek yogurt', amount: '1 large tub' }, { item: 'Cottage cheese', amount: '1–2 tubs' },
+      { item: 'Whey protein', amount: 'Enough for 7 shakes' }, { item: 'Rice', amount: '1–2 large bags or containers' }, { item: 'Pasta', amount: '2–3 boxes' },
+      { item: 'Oats', amount: '1 large container' }, { item: 'Potatoes', amount: '5–10 lb' }, { item: 'Vegetables', amount: '5–7 total servings per day' },
+      { item: 'Fruit', amount: '7–14 pieces per week' }
+    ],
+    prepSteps: ['Cook 2 proteins', 'Cook 2 carbs', 'Cook 2–3 vegetables', 'Portion everything into containers', 'Keep shakes, yogurt, fruit, and snacks ready to grab'],
+    repeatRules: ['Repeat the same 4-week cycle', 'Swap seasonings to change flavor', 'Use pasta 2–4 times per week', 'Increase portions slightly on training days', 'Reduce carb portions a little on rest days if fat loss matters too']
+  }
+}
+
 export function databaseReady() { return postgresAvailable }
 
 async function loadLocalTasks() {
@@ -184,6 +236,7 @@ export async function initializeDatabase() {
     localEvents = await loadCollection<EventRecord>('events.json')
     localIdeas = await loadCollection<IdeaRecord>('ideas.json')
     localGymRoutines = await loadCollection<GymRoutine>('gym-routines.json')
+    localDietPlan = (await loadCollection<DietPlan>('diet-plan.json'))[0] ?? null
     const savedPreferences = await loadCollection<Preferences>('preferences.json')
     if (savedPreferences[0]) localPreferences = { ...localPreferences, ...savedPreferences[0], modules: { ...localPreferences.modules, ...savedPreferences[0].modules }, widgets: { ...localPreferences.widgets, ...savedPreferences[0].widgets } }
     console.warn('PostgreSQL unavailable; using local development data/task storage.')
@@ -380,6 +433,38 @@ export async function deleteGymRoutine(id: string): Promise<boolean> {
   return Boolean(result.rowCount)
 }
 
+function normalizeDietPlan(row: Record<string, unknown>): DietPlan {
+  return { ...row, updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt ?? new Date().toISOString()) } as DietPlan
+}
+
+export async function getDietPlan(): Promise<DietPlan> {
+  if (!postgresAvailable) {
+    if (!localDietPlan) {
+      localDietPlan = { ...defaultDietPlanInput(), id: crypto.randomUUID(), updatedAt: new Date().toISOString() }
+      await saveCollection('diet-plan.json', [localDietPlan])
+    }
+    return localDietPlan
+  }
+  const result = await pool.query(`SELECT id, name, portion_guide AS "portionGuide", guidance, weeks, groceries, shopping_amounts AS "shoppingAmounts", prep_steps AS "prepSteps", repeat_rules AS "repeatRules", updated_at AS "updatedAt" FROM diet_plans WHERE user_id=$1`, ['local'])
+  if (result.rows[0]) return normalizeDietPlan(result.rows[0])
+  return updateDietPlan(defaultDietPlanInput())
+}
+
+export async function updateDietPlan(input: DietPlanInput): Promise<DietPlan> {
+  const plan: DietPlan = { ...input, id: localDietPlan?.id ?? crypto.randomUUID(), updatedAt: new Date().toISOString() }
+  if (!postgresAvailable) {
+    localDietPlan = plan
+    await saveCollection('diet-plan.json', [plan])
+    return plan
+  }
+  const result = await pool.query(`INSERT INTO diet_plans (id, user_id, name, portion_guide, guidance, weeks, groceries, shopping_amounts, prep_steps, repeat_rules)
+    VALUES ($1,'local',$2,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb)
+    ON CONFLICT (user_id) DO UPDATE SET name=$2, portion_guide=$3::jsonb, guidance=$4::jsonb, weeks=$5::jsonb, groceries=$6::jsonb, shopping_amounts=$7::jsonb, prep_steps=$8::jsonb, repeat_rules=$9::jsonb, updated_at=NOW()
+    RETURNING id, name, portion_guide AS "portionGuide", guidance, weeks, groceries, shopping_amounts AS "shoppingAmounts", prep_steps AS "prepSteps", repeat_rules AS "repeatRules", updated_at AS "updatedAt"`,
+  [plan.id, input.name, JSON.stringify(input.portionGuide), JSON.stringify(input.guidance), JSON.stringify(input.weeks), JSON.stringify(input.groceries), JSON.stringify(input.shoppingAmounts), JSON.stringify(input.prepSteps), JSON.stringify(input.repeatRules)])
+  return normalizeDietPlan(result.rows[0])
+}
+
 export async function listAttachments(memoryId: string): Promise<AttachmentRecord[]> {
   if (!postgresAvailable) return []
   const result = await pool.query(`SELECT id, memory_id AS "memoryId", filename, mime_type AS "mimeType", byte_size AS "byteSize", storage_key AS "storageKey"
@@ -496,7 +581,7 @@ export async function exportData() {
   return {
     tasks: await listTasks(), events: await listEvents(), ideas: await listIdeas(),
     financialAccounts: await listFinancialAccounts(), financialTransactions: await listFinancialTransactions(), goals: await listGoals(),
-    movies: await listMovies(), music: await listMusic(), memories: await listMemories(), gymRoutines: await listGymRoutines()
+    movies: await listMovies(), music: await listMusic(), memories: await listMemories(), gymRoutines: await listGymRoutines(), dietPlan: await getDietPlan()
   }
 }
 
@@ -504,7 +589,7 @@ export type RestoreData = {
   tasks: TaskRecord[]; events: EventRecord[]; ideas: IdeaRecord[];
   financialAccounts?: Array<{ id: string; name: string; kind: string; currency: string; openingBalanceMinor: number }>;
   financialTransactions?: FinancialTransaction[]; goals?: GoalRecord[];
-  movies?: MovieRecord[]; music?: MusicRecord[]; memories?: MemoryRecord[]; gymRoutines?: GymRoutine[]
+  movies?: MovieRecord[]; music?: MusicRecord[]; memories?: MemoryRecord[]; gymRoutines?: GymRoutine[]; dietPlan?: DietPlan
 }
 
 export async function restoreData(data: RestoreData) {
@@ -513,7 +598,8 @@ export async function restoreData(data: RestoreData) {
     localEvents = data.events
     localIdeas = data.ideas
     localGymRoutines = data.gymRoutines ?? []
-    await saveLocalTasks(); await saveCollection('events.json', localEvents); await saveCollection('ideas.json', localIdeas); await saveCollection('gym-routines.json', localGymRoutines)
+    localDietPlan = data.dietPlan ?? null
+    await saveLocalTasks(); await saveCollection('events.json', localEvents); await saveCollection('ideas.json', localIdeas); await saveCollection('gym-routines.json', localGymRoutines); await saveCollection('diet-plan.json', localDietPlan ? [localDietPlan] : [])
     return
   }
   const client = await pool.connect()
@@ -529,6 +615,7 @@ export async function restoreData(data: RestoreData) {
     await client.query('DELETE FROM music_tracks WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM memory_entries WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM gym_routines WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM diet_plans WHERE user_id = $1', ['local'])
     for (const task of [...data.tasks].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))) await client.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, due_date, priority, tags, list_name, sort_order, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)', [task.id, 'local', task.parentId ?? null, task.summary, task.notes, task.dueDate, task.priority, JSON.stringify(task.tags), task.listName, task.sortOrder ?? 0, task.completed, task.createdAt])
     for (const event of data.events) await client.query('INSERT INTO calendar_events (id, user_id, title, event_date, notes) VALUES ($1,$2,$3,$4,$5)', [event.id, 'local', event.title, event.date, event.notes])
     for (const idea of data.ideas) await client.query('INSERT INTO ideas (id, user_id, title, body, created_at) VALUES ($1,$2,$3,$4,$5)', [idea.id, 'local', idea.title, idea.body, idea.createdAt])
@@ -540,6 +627,7 @@ export async function restoreData(data: RestoreData) {
     for (const memory of data.memories ?? []) await client.query('INSERT INTO memory_entries (id, user_id, title, body, occurred_on) VALUES ($1,$2,$3,$4,$5)', [memory.id, 'local', memory.title, memory.body, memory.occurredOn])
     for (const routine of data.gymRoutines ?? []) await client.query(`INSERT INTO gym_routines (id, user_id, name, description, calendar_enabled, training_days, start_date, workout_order, workouts, cardio_minutes, schedule_mode, day_workouts, progression, created_at, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15)`, [routine.id, 'local', routine.name, routine.description, routine.calendarEnabled ?? true, JSON.stringify(routine.trainingDays), routine.startDate, JSON.stringify(routine.workoutOrder ?? ['A', 'B']), JSON.stringify(routine.workouts), JSON.stringify(routine.cardioMinutes ?? {}), routine.scheduleMode ?? 'rotation', JSON.stringify(routine.dayWorkouts ?? {}), JSON.stringify(routine.progression), routine.createdAt, routine.updatedAt])
+    if (data.dietPlan) await client.query(`INSERT INTO diet_plans (id, user_id, name, portion_guide, guidance, weeks, groceries, shopping_amounts, prep_steps, repeat_rules, updated_at) VALUES ($1,'local',$2,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10)`, [data.dietPlan.id, data.dietPlan.name, JSON.stringify(data.dietPlan.portionGuide), JSON.stringify(data.dietPlan.guidance), JSON.stringify(data.dietPlan.weeks), JSON.stringify(data.dietPlan.groceries), JSON.stringify(data.dietPlan.shoppingAmounts), JSON.stringify(data.dietPlan.prepSteps), JSON.stringify(data.dietPlan.repeatRules), data.dietPlan.updatedAt])
     await client.query('COMMIT')
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }
