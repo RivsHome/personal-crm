@@ -57,13 +57,17 @@ const movieInput = z.object({ title: z.string().trim().min(1).max(240), year: z.
 const musicInput = z.object({ title: z.string().trim().min(1).max(240), artist: z.string().max(160).default(''), album: z.string().max(160).default('') })
 const memoryInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(10000).default(''), occurredOn: z.string().date().nullable() })
 const gymExerciseInput = z.object({ id: z.string().min(1).max(80), name: z.string().trim().min(1).max(240), sets: z.string().trim().min(1).max(40), reps: z.string().trim().min(1).max(80), optional: z.boolean().default(false) })
+const workoutKeyInput = z.enum(['A', 'B', 'C', 'D', 'E'])
+const cardioMinutesInput = z.number().int().min(0).max(600).default(0)
 const gymRoutineInput = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().max(2000).default(''),
   calendarEnabled: z.boolean().optional().default(true),
   trainingDays: z.array(z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])).min(1).max(7),
   startDate: z.string().date(),
-  workouts: z.object({ A: z.array(gymExerciseInput).min(1).max(30), B: z.array(gymExerciseInput).min(1).max(30) }),
+  workoutOrder: z.array(workoutKeyInput).min(2).max(5).refine(order => new Set(order).size === order.length, 'Workouts cannot repeat in the rotation.').optional().default(['A', 'B']),
+  workouts: z.object({ A: z.array(gymExerciseInput).min(1).max(30), B: z.array(gymExerciseInput).min(1).max(30), C: z.array(gymExerciseInput).max(30).default([]), D: z.array(gymExerciseInput).max(30).default([]), E: z.array(gymExerciseInput).max(30).default([]) }),
+  cardioMinutes: z.object({ A: cardioMinutesInput, B: cardioMinutesInput, C: cardioMinutesInput, D: cardioMinutesInput, E: cardioMinutesInput }).optional().default({ A: 0, B: 0, C: 0, D: 0, E: 0 }),
   progression: z.object({ method: z.string().max(5000), restBigLifts: z.string().max(120), restAccessories: z.string().max(120), duration: z.string().max(120), rules: z.array(z.string().trim().min(1).max(500)).max(20) })
 })
 const loginCredentials = z.object({ email: z.string().email(), password: z.string().min(8).max(200) })

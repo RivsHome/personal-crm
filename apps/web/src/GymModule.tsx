@@ -2,18 +2,22 @@ import { useEffect, useMemo, useState } from 'react'
 import { CalendarRange, Check, Clock3, Dumbbell, Pencil, Plus, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react'
 
 export type GymExercise = { id: string; name: string; sets: string; reps: string; optional: boolean }
+export type WorkoutKey = 'A' | 'B' | 'C' | 'D' | 'E'
 export type GymRoutineInput = {
   name: string
   description: string
   calendarEnabled: boolean
   trainingDays: string[]
   startDate: string
-  workouts: { A: GymExercise[]; B: GymExercise[] }
+  workoutOrder: WorkoutKey[]
+  workouts: Record<WorkoutKey, GymExercise[]>
+  cardioMinutes: Record<WorkoutKey, number>
   progression: { method: string; restBigLifts: string; restAccessories: string; duration: string; rules: string[] }
 }
 export type GymRoutine = GymRoutineInput & { id: string; createdAt: string; updatedAt: string }
 
 const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+const workoutKeys: WorkoutKey[] = ['A', 'B', 'C', 'D', 'E']
 const dayLabel = (day: string) => day.slice(0, 3).replace(/^./, letter => letter.toUpperCase())
 const exercise = (name = 'New exercise'): GymExercise => ({ id: crypto.randomUUID(), name, sets: '3', reps: '8–12', optional: false })
 
@@ -24,7 +28,9 @@ function blankRoutine(): GymRoutineInput {
     calendarEnabled: true,
     trainingDays: ['monday', 'wednesday', 'friday'],
     startDate: new Date().toISOString().slice(0, 10),
-    workouts: { A: [exercise()], B: [exercise()] },
+    workoutOrder: ['A', 'B'],
+    workouts: { A: [exercise()], B: [exercise()], C: [], D: [], E: [] },
+    cardioMinutes: { A: 0, B: 0, C: 0, D: 0, E: 0 },
     progression: {
       method: 'Describe how weight or reps should progress over time.',
       restBigLifts: '2–3 minutes',
@@ -35,12 +41,16 @@ function blankRoutine(): GymRoutineInput {
   }
 }
 
-function cycleWeek(startDate: string) {
+function cycleWeekIndex(startDate: string) {
   const start = new Date(`${startDate}T12:00:00`)
-  if (Number.isNaN(start.getTime())) return 1
+  if (Number.isNaN(start.getTime())) return 0
   start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
   const elapsed = Math.max(0, Date.now() - start.getTime())
-  return Math.floor(elapsed / (7 * 24 * 60 * 60 * 1000)) % 2 + 1
+  return Math.floor(elapsed / (7 * 24 * 60 * 60 * 1000))
+}
+
+function weekPattern(routine: GymRoutine, weekIndex: number) {
+  return routine.trainingDays.map((_, dayIndex) => routine.workoutOrder[(weekIndex * routine.trainingDays.length + dayIndex) % routine.workoutOrder.length])
 }
 
 export default function GymModule({ request, onRoutinesChange }: { request: (path: string, init?: RequestInit) => Promise<Response>; onRoutinesChange?: (routines: GymRoutine[]) => void }) {
@@ -64,7 +74,7 @@ export default function GymModule({ request, onRoutinesChange }: { request: (pat
   }, [request, onRoutinesChange])
 
   const selected = routines.find(routine => routine.id === selectedId) ?? routines[0]
-  const currentCycleWeek = useMemo(() => selected ? cycleWeek(selected.startDate) : 1, [selected])
+  const currentWeekIndex = useMemo(() => selected ? cycleWeekIndex(selected.startDate) : 0, [selected])
 
   function beginEdit() {
     if (!selected) return
@@ -129,14 +139,26 @@ export default function GymModule({ request, onRoutinesChange }: { request: (pat
     setDraft({ ...draft, trainingDays: active ? draft.trainingDays.filter(item => item !== day) : days.filter(item => item === day || draft.trainingDays.includes(item)) })
   }
 
-  function updateExercise(workout: 'A' | 'B', id: string, patch: Partial<GymExercise>) {
+  function updateExercise(workout: WorkoutKey, id: string, patch: Partial<GymExercise>) {
     if (!draft) return
     setDraft({ ...draft, workouts: { ...draft.workouts, [workout]: draft.workouts[workout].map(item => item.id === id ? { ...item, ...patch } : item) } })
   }
 
-  function removeExercise(workout: 'A' | 'B', id: string) {
+  function removeExercise(workout: WorkoutKey, id: string) {
     if (!draft || draft.workouts[workout].length === 1) return
     setDraft({ ...draft, workouts: { ...draft.workouts, [workout]: draft.workouts[workout].filter(item => item.id !== id) } })
+  }
+
+  function addWorkout() {
+    if (!draft) return
+    const workout = workoutKeys.find(key => !draft.workoutOrder.includes(key))
+    if (!workout) return
+    setDraft({ ...draft, workoutOrder: [...draft.workoutOrder, workout], workouts: { ...draft.workouts, [workout]: [exercise()] } })
+  }
+
+  function removeWorkout(workout: WorkoutKey) {
+    if (!draft || workout === 'A' || workout === 'B') return
+    setDraft({ ...draft, workoutOrder: draft.workoutOrder.filter(key => key !== workout), workouts: { ...draft.workouts, [workout]: [] }, cardioMinutes: { ...draft.cardioMinutes, [workout]: 0 } })
   }
 
   if (loading) return <section className="gym-loading panel"><Dumbbell size={28} /><p>Loading your training plan...</p></section>
@@ -157,18 +179,24 @@ export default function GymModule({ request, onRoutinesChange }: { request: (pat
       <div className="gym-editor-header"><div><span className="panel-kicker"><Pencil size={15} /> {editingId === 'new' ? 'NEW ROUTINE' : 'EDIT ROUTINE'}</span><h2>{editingId === 'new' ? 'Build your routine' : `Editing ${draft.name}`}</h2></div><button type="button" className="icon-button" onClick={cancelEdit} aria-label="Close editor"><X size={18} /></button></div>
       <div className="gym-basics"><label>Routine name<input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required /></label><label>Cycle start date<input type="date" value={draft.startDate} onChange={event => setDraft({ ...draft, startDate: event.target.value })} required /></label><label className="wide">Description<textarea value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label><label className="calendar-sync-toggle wide"><span><CalendarRange size={17} /><span><b>Show on main calendar</b><small>Add subtle recurring workout markers to your monthly calendar.</small></span></span><input type="checkbox" checked={draft.calendarEnabled} onChange={event => setDraft({ ...draft, calendarEnabled: event.target.checked })} /></label></div>
       <div className="gym-edit-section"><div><span className="panel-kicker"><CalendarRange size={15} /> SCHEDULE</span><h3>Training days</h3></div><div className="day-picker">{days.map(day => <button type="button" key={day} className={draft.trainingDays.includes(day) ? 'selected' : ''} onClick={() => toggleDay(day)}>{dayLabel(day)}</button>)}</div></div>
-      <div className="workout-editor-grid">{(['A', 'B'] as const).map(workout => <section className="workout-editor" key={workout}><div className="workout-title"><span>Workout {workout}</span><b>{draft.workouts[workout].length} exercises</b></div>{draft.workouts[workout].map(item => <div className="exercise-editor-row" key={item.id}><input className="exercise-name" value={item.name} onChange={event => updateExercise(workout, item.id, { name: event.target.value })} aria-label={`Workout ${workout} exercise name`} required /><label>Sets<input value={item.sets} onChange={event => updateExercise(workout, item.id, { sets: event.target.value })} required /></label><label>Reps<input value={item.reps} onChange={event => updateExercise(workout, item.id, { reps: event.target.value })} required /></label><label className="optional-check"><input type="checkbox" checked={item.optional} onChange={event => updateExercise(workout, item.id, { optional: event.target.checked })} /> Optional</label><button type="button" className="icon-button" onClick={() => removeExercise(workout, item.id)} disabled={draft.workouts[workout].length === 1} aria-label={`Remove ${item.name}`}><Trash2 size={15} /></button></div>)}<button type="button" className="add-exercise" onClick={() => setDraft({ ...draft, workouts: { ...draft.workouts, [workout]: [...draft.workouts[workout], exercise()] } })}><Plus size={15} /> Add exercise</button></section>)}</div>
+      <div className="workout-editor-grid">{draft.workoutOrder.map(workout => <section className={`workout-editor workout-editor-${workout.toLowerCase()}`} key={workout}>
+        <div className="workout-title"><span>Workout {workout}</span><b>{draft.workouts[workout].length} exercises</b>{workout !== 'A' && workout !== 'B' && <button type="button" className="icon-button" onClick={() => removeWorkout(workout)} aria-label={`Remove Workout ${workout}`}><Trash2 size={15} /></button>}</div>
+        <label className="cardio-field"><span><Clock3 size={15} /> Cardio time</span><span><input type="number" min="0" max="600" step="5" value={draft.cardioMinutes[workout]} onChange={event => setDraft({ ...draft, cardioMinutes: { ...draft.cardioMinutes, [workout]: Number(event.target.value) } })} aria-label={`Workout ${workout} cardio minutes`} /> minutes</span></label>
+        {draft.workouts[workout].map(item => <div className="exercise-editor-row" key={item.id}><input className="exercise-name" value={item.name} onChange={event => updateExercise(workout, item.id, { name: event.target.value })} aria-label={`Workout ${workout} exercise name`} required /><label>Sets<input value={item.sets} onChange={event => updateExercise(workout, item.id, { sets: event.target.value })} required /></label><label>Reps<input value={item.reps} onChange={event => updateExercise(workout, item.id, { reps: event.target.value })} required /></label><label className="optional-check"><input type="checkbox" checked={item.optional} onChange={event => updateExercise(workout, item.id, { optional: event.target.checked })} /> Optional</label><button type="button" className="icon-button" onClick={() => removeExercise(workout, item.id)} disabled={draft.workouts[workout].length === 1} aria-label={`Remove ${item.name}`}><Trash2 size={15} /></button></div>)}
+        <button type="button" className="add-exercise" onClick={() => setDraft({ ...draft, workouts: { ...draft.workouts, [workout]: [...draft.workouts[workout], exercise()] } })}><Plus size={15} /> Add exercise</button>
+      </section>)}</div>
+      {draft.workoutOrder.length < workoutKeys.length && <button type="button" className="add-workout" onClick={addWorkout}><Plus size={16} /> Add Workout {workoutKeys.find(key => !draft.workoutOrder.includes(key))}</button>}
       <div className="gym-edit-section progression-editor"><div><span className="panel-kicker"><TrendingUp size={15} /> PROGRESSION</span><h3>Progression and recovery</h3></div><label>Progression method<textarea value={draft.progression.method} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, method: event.target.value } })} /></label><div className="progression-fields"><label>Big lift rest<input value={draft.progression.restBigLifts} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, restBigLifts: event.target.value } })} /></label><label>Accessory rest<input value={draft.progression.restAccessories} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, restAccessories: event.target.value } })} /></label><label>Workout duration<input value={draft.progression.duration} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, duration: event.target.value } })} /></label></div><label>Year-round rules<textarea value={draft.progression.rules.join('\n')} onChange={event => setDraft({ ...draft, progression: { ...draft.progression, rules: event.target.value.split('\n').map(rule => rule.trim()).filter(Boolean) } })} placeholder="One rule per line" /></label></div>
       <div className="gym-editor-actions"><button type="button" className="text-action" onClick={cancelEdit}>Cancel</button><button type="submit" className="task-creator-toggle" disabled={saving}><Save size={16} /> {saving ? 'Saving...' : 'Save routine'}</button></div>
     </form> : selected ? <>
       <article className="gym-overview panel">
         <div className="gym-overview-copy"><span className="panel-kicker"><Sparkles size={15} /> ACTIVE ROUTINE</span><h2>{selected.name}</h2><p>{selected.description}</p><div className="gym-overview-actions"><button type="button" className="task-creator-toggle" onClick={beginEdit}><Pencil size={16} /> Edit routine</button><button type="button" className={`gym-delete ${deleteArmed ? 'armed' : ''}`} onClick={() => void removeRoutine()} onBlur={() => setDeleteArmed(false)}><Trash2 size={15} /> {deleteArmed ? 'Confirm delete' : 'Delete'}</button></div></div>
-        <div className="cycle-card"><span>Current cycle</span><b>Week {currentCycleWeek}</b><small>{currentCycleWeek === 1 ? 'A / B / A' : 'B / A / B'}</small></div>
+        <div className="cycle-card"><span>Current cycle</span><b>Week {currentWeekIndex + 1}</b><small>{weekPattern(selected, currentWeekIndex).join(' / ')}</small></div>
       </article>
 
-      <section className="schedule-card panel"><div className="section-heading"><div><span className="panel-kicker"><CalendarRange size={15} /> WEEKLY RHYTHM</span><h2>Alternate every week</h2></div><span className="schedule-days">{selected.trainingDays.map(dayLabel).join(' · ')}</span></div><div className="week-patterns">{[1, 2].map(week => <div className={week === currentCycleWeek ? 'week-pattern active' : 'week-pattern'} key={week}><span>Week {week}{week === currentCycleWeek && <small>Current</small>}</span><div>{selected.trainingDays.map((day, index) => { const workout = (index + week) % 2 === 1 ? 'A' : 'B'; return <span className={`workout-chip workout-${workout.toLowerCase()}`} key={day}><small>{dayLabel(day)}</small><b>{workout}</b></span> })}</div></div>)}</div></section>
+      <section className="schedule-card panel"><div className="section-heading"><div><span className="panel-kicker"><CalendarRange size={15} /> WEEKLY RHYTHM</span><h2>Continuous workout rotation</h2></div><span className="schedule-days">{selected.trainingDays.map(dayLabel).join(' · ')}</span></div><div className="week-patterns">{[currentWeekIndex, currentWeekIndex + 1].map(weekIndex => <div className={weekIndex === currentWeekIndex ? 'week-pattern active' : 'week-pattern'} key={weekIndex}><span>Week {weekIndex + 1}{weekIndex === currentWeekIndex && <small>Current</small>}</span><div>{selected.trainingDays.map((day, dayIndex) => { const workout = selected.workoutOrder[(weekIndex * selected.trainingDays.length + dayIndex) % selected.workoutOrder.length]; return <span className={`workout-chip workout-${workout.toLowerCase()}`} key={day}><small>{dayLabel(day)}</small><b>{workout}</b></span> })}</div></div>)}</div></section>
 
-      <div className="gym-workout-grid">{(['A', 'B'] as const).map(workout => <article className={`workout-card workout-card-${workout.toLowerCase()}`} key={workout}><div className="workout-card-header"><span>Workout</span><b>{workout}</b><small>{selected.workouts[workout].length} movements</small></div><ol>{selected.workouts[workout].map(item => <li key={item.id}><span><b>{item.name}</b>{item.optional && <small>Optional</small>}</span><span><b>{item.sets}</b> sets</span><span><b>{item.reps}</b> reps</span></li>)}</ol></article>)}</div>
+      <div className="gym-workout-grid">{selected.workoutOrder.map(workout => <article className={`workout-card workout-card-${workout.toLowerCase()}`} key={workout}><div className="workout-card-header"><span>Workout</span><b>{workout}</b><small>{selected.workouts[workout].length} movements{selected.cardioMinutes[workout] > 0 && <> · {selected.cardioMinutes[workout]} min cardio</>}</small></div><ol>{selected.workouts[workout].map(item => <li key={item.id}><span><b>{item.name}</b>{item.optional && <small>Optional</small>}</span><span><b>{item.sets}</b> sets</span><span><b>{item.reps}</b> reps</span></li>)}</ol>{selected.cardioMinutes[workout] > 0 && <div className="cardio-summary"><Clock3 size={16} /><span><b>{selected.cardioMinutes[workout]} minutes</b> cardio</span></div>}</article>)}</div>
 
       <section className="progression-card panel"><div className="section-heading"><div><span className="panel-kicker"><TrendingUp size={15} /> HOW TO PROGRESS</span><h2>Earn the next increase</h2></div></div><p className="progression-copy">{selected.progression.method}</p><div className="recovery-stats"><div><TrendingUp size={18} /><span><small>Big lifts</small><b>{selected.progression.restBigLifts}</b></span></div><div><Clock3 size={18} /><span><small>Accessories</small><b>{selected.progression.restAccessories}</b></span></div><div><Dumbbell size={18} /><span><small>Session target</small><b>{selected.progression.duration}</b></span></div></div><div className="rules-list"><h3>Year-round rules</h3>{selected.progression.rules.map((rule, index) => <div key={`${rule}-${index}`}><Check size={15} /><span>{rule}</span></div>)}</div></section>
     </> : <div className="gym-empty panel"><Dumbbell size={30} /><h2>No routines yet</h2><p>Create a routine to start planning your training week.</p><button type="button" className="task-creator-toggle" onClick={beginNew}><Plus size={16} /> Create routine</button></div>}
