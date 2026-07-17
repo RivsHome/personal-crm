@@ -6,6 +6,7 @@ test('default gym routine preserves the requested A/B schedule and progression r
   const routine = defaultGymRoutineInput()
 
   assert.deepEqual(routine.trainingDays, ['monday', 'wednesday', 'friday'])
+  assert.equal(routine.calendarEnabled, true)
   assert.equal(routine.workouts.A[0].name, 'Back squat')
   assert.equal(routine.workouts.A[0].sets, '3')
   assert.equal(routine.workouts.A[0].reps, '5')

@@ -396,6 +396,51 @@ nav a { cursor: pointer; }
   background: #343728;
 }
 
+.calendar-sync-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: -2px 0 11px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.calendar-sync-legend > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-soft));
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.gym-calendar-event {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 5px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.gym-calendar-event svg { flex: none; color: color-mix(in srgb, var(--accent) 68%, var(--text-muted)); }
+.gym-calendar-event span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.gym-calendar-event b { margin-left: auto; color: var(--accent); }
+.gym-calendar-event.gym-calendar-b { border-color: rgba(133, 184, 255, .14); background: rgba(133, 184, 255, .04); }
+.gym-calendar-event.gym-calendar-b svg, .gym-calendar-event.gym-calendar-b b { color: #85b8ff; }
+.gym-calendar-event:hover { border-color: color-mix(in srgb, var(--accent) 34%, transparent); color: var(--text-soft); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.gym-calendar-more { border: 0; color: var(--text-muted); background: transparent; font-size: 9px; text-align: left; cursor: pointer; }
+
 .dashboard-agenda {
   list-style: none;
   margin: 18px 0 0;
@@ -986,6 +1031,23 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .gym-basics { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 13px; margin-top: 22px; }
 .gym-basics label, .progression-editor label, .exercise-editor-row label { display: grid; gap: 6px; color: var(--text-soft); font-size: 12px; }
 .gym-basics label.wide { grid-column: span 2; }
+.gym-basics .calendar-sync-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 60px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .025);
+}
+.calendar-sync-toggle > span { display: flex; align-items: center; gap: 10px; }
+.calendar-sync-toggle > span > svg { flex: none; color: var(--accent); }
+.calendar-sync-toggle > span > span { display: grid; gap: 3px; }
+.calendar-sync-toggle b { color: var(--text); font-size: 13px; }
+.calendar-sync-toggle small { color: var(--text-muted); font-size: 11px; }
+.gym-editor .calendar-sync-toggle > input { width: 38px; height: 20px; flex: none; accent-color: var(--accent); }
 .gym-editor input, .gym-editor textarea { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; color: var(--text); background: rgba(255, 255, 255, .04); outline: 0; }
 .gym-editor textarea { min-height: 86px; resize: vertical; line-height: 1.5; }
 .gym-editor input:focus, .gym-editor textarea:focus { border-color: color-mix(in srgb, var(--accent) 58%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent); }
@@ -1032,6 +1094,11 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .exercise-editor-row .exercise-name { grid-column: span 4; }
   .exercise-editor-row .optional-check { align-self: center; }
   .workout-card li { grid-template-columns: minmax(0, 1fr) 55px 65px; }
+  .calendar-sync-legend { justify-content: flex-start; }
+  .calendar-sync-legend > small { display: none; }
+  .gym-calendar-event { min-height: 16px; justify-content: center; padding: 1px; border-radius: 4px; }
+  .gym-calendar-event svg, .gym-calendar-event span { display: none; }
+  .gym-calendar-event b { margin: 0; font-size: 9px; }
 }
 
 @media (max-width: 480px) {
