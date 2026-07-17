@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const { Pool } = pg
@@ -31,6 +31,19 @@ export type MovieRecord = { id: string; title: string; year: number | null; watc
 export type MusicRecord = { id: string; title: string; artist: string; album: string; listened: boolean }
 export type MemoryRecord = { id: string; title: string; body: string; occurredOn: string | null }
 export type AttachmentRecord = { id: string; memoryId: string; filename: string; mimeType: string; byteSize: number; storageKey: string }
+export type GymExercise = { id: string; name: string; sets: string; reps: string; optional: boolean }
+export type GymRoutine = {
+  id: string
+  name: string
+  description: string
+  trainingDays: string[]
+  startDate: string
+  workouts: { A: GymExercise[]; B: GymExercise[] }
+  progression: { method: string; restBigLifts: string; restAccessories: string; duration: string; rules: string[] }
+  createdAt: string
+  updatedAt: string
+}
+export type GymRoutineInput = Omit<GymRoutine, 'id' | 'createdAt' | 'updatedAt'>
 export type Preferences = {
   theme: 'dark' | 'light'
   accent: string
@@ -46,6 +59,7 @@ const localDataPath = path.resolve(process.cwd(), 'data', 'tasks.json')
 let localTasks: TaskRecord[] = []
 let localEvents: EventRecord[] = []
 let localIdeas: IdeaRecord[] = []
+let localGymRoutines: GymRoutine[] = []
 let localPreferences: Preferences = {
   theme: 'dark', accent: '#c9f253', timezone: 'America/New_York', weekStart: 'sunday',
   modules: { calendar: true, tasks: true, ideas: true }, widgets: { tasks: true, calendar: true, ideas: true }, dashboardOrder: ['tasks', 'calendar', 'ideas']
@@ -64,6 +78,50 @@ function normalizeEvent(row: Record<string, unknown>): EventRecord {
 
 function normalizeTask(row: Record<string, unknown>): TaskRecord {
   return { ...row, dueDate: dateOnly(row.dueDate), tags: Array.isArray(row.tags) ? row.tags.map(String) : [], sortOrder: Number(row.sortOrder ?? 0) } as TaskRecord
+}
+
+function normalizeGymRoutine(row: Record<string, unknown>): GymRoutine {
+  return { ...row, startDate: dateOnly(row.startDate) ?? new Date().toISOString().slice(0, 10) } as GymRoutine
+}
+
+export function defaultGymRoutineInput(): GymRoutineInput {
+  const exercise = (name: string, sets: string, reps: string, optional = false): GymExercise => ({ id: crypto.randomUUID(), name, sets, reps, optional })
+  return {
+    name: 'Strength & Size A/B',
+    description: 'A focused three-day strength routine that alternates Workout A and Workout B each week.',
+    trainingDays: ['monday', 'wednesday', 'friday'],
+    startDate: new Date().toISOString().slice(0, 10),
+    workouts: {
+      A: [
+        exercise('Back squat', '3', '5'),
+        exercise('Bench press', '3', '5'),
+        exercise('Barbell row or chest-supported row', '3', '5–8'),
+        exercise('Romanian deadlift', '2–3', '8–10'),
+        exercise('Curls', '2', '10–15', true),
+        exercise('Triceps pushdowns', '2', '10–15', true)
+      ],
+      B: [
+        exercise('Deadlift', '1–3', '3–5'),
+        exercise('Overhead press', '3', '5'),
+        exercise('Pull-ups or lat pulldown', '3', '8–12'),
+        exercise('Incline dumbbell press', '2–3', '8–12'),
+        exercise('Leg press or lunges', '2–3', '10–15'),
+        exercise('Abs', '2–3', 'Your choice', true)
+      ]
+    },
+    progression: {
+      method: 'Use the listed rep range, then add weight once you hit the top end with good form. If you complete all 3 sets of 5 on bench press, add 5 lb next week. If you miss reps, keep the same weight until you earn it.',
+      restBigLifts: '2–3 minutes',
+      restAccessories: '60–90 seconds',
+      duration: '60–75 minutes',
+      rules: [
+        'Focus on perfect form first.',
+        'Add weight slowly.',
+        'If you feel beat up, take a lighter week every 6–10 weeks.',
+        'Stay in the 5–12 rep range for most work when your goal is size.'
+      ]
+    }
+  }
 }
 
 export function databaseReady() { return postgresAvailable }
@@ -92,14 +150,16 @@ async function saveCollection<T>(name: string, value: T[]) {
 
 export async function initializeDatabase() {
   try {
-    const migration = await readFile(path.resolve(process.cwd(), 'apps', 'api', 'migrations', '001_initial.sql'), 'utf8')
-    await pool.query(migration)
+    const migrationDirectory = path.resolve(process.cwd(), 'apps', 'api', 'migrations')
+    const migrations = (await readdir(migrationDirectory)).filter(file => file.endsWith('.sql')).sort()
+    for (const migrationFile of migrations) await pool.query(await readFile(path.join(migrationDirectory, migrationFile), 'utf8'))
     postgresAvailable = true
   } catch (error) {
     if (process.env.NODE_ENV === 'production') throw error
     await loadLocalTasks()
     localEvents = await loadCollection<EventRecord>('events.json')
     localIdeas = await loadCollection<IdeaRecord>('ideas.json')
+    localGymRoutines = await loadCollection<GymRoutine>('gym-routines.json')
     const savedPreferences = await loadCollection<Preferences>('preferences.json')
     if (savedPreferences[0]) localPreferences = { ...localPreferences, ...savedPreferences[0], modules: { ...localPreferences.modules, ...savedPreferences[0].modules }, widgets: { ...localPreferences.widgets, ...savedPreferences[0].widgets } }
     console.warn('PostgreSQL unavailable; using local development data/task storage.')
@@ -244,6 +304,58 @@ export async function createMemory(title: string, body: string, occurredOn: stri
   return result.rows[0] as MemoryRecord
 }
 
+export async function listGymRoutines(): Promise<GymRoutine[]> {
+  let routines: GymRoutine[]
+  if (!postgresAvailable) routines = localGymRoutines
+  else {
+    const result = await pool.query(`SELECT id, name, description, training_days AS "trainingDays", start_date AS "startDate", workouts, progression,
+      created_at AS "createdAt", updated_at AS "updatedAt" FROM gym_routines WHERE user_id = $1 ORDER BY updated_at DESC`, ['local'])
+    routines = result.rows.map(normalizeGymRoutine)
+  }
+  if (routines.length === 0) return [await createGymRoutine(defaultGymRoutineInput())]
+  return routines
+}
+
+export async function createGymRoutine(input: GymRoutineInput): Promise<GymRoutine> {
+  const routine: GymRoutine = { ...input, id: crypto.randomUUID(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+  if (!postgresAvailable) {
+    localGymRoutines.unshift(routine)
+    await saveCollection('gym-routines.json', localGymRoutines)
+    return routine
+  }
+  const result = await pool.query(`INSERT INTO gym_routines (id, name, description, training_days, start_date, workouts, progression)
+    VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7::jsonb)
+    RETURNING id, name, description, training_days AS "trainingDays", start_date AS "startDate", workouts, progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [routine.id, input.name, input.description, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workouts), JSON.stringify(input.progression)])
+  return normalizeGymRoutine(result.rows[0])
+}
+
+export async function updateGymRoutine(id: string, input: GymRoutineInput): Promise<GymRoutine | null> {
+  if (!postgresAvailable) {
+    const index = localGymRoutines.findIndex(routine => routine.id === id)
+    if (index < 0) return null
+    localGymRoutines[index] = { ...localGymRoutines[index], ...input, updatedAt: new Date().toISOString() }
+    await saveCollection('gym-routines.json', localGymRoutines)
+    return localGymRoutines[index]
+  }
+  const result = await pool.query(`UPDATE gym_routines SET name=$2, description=$3, training_days=$4::jsonb, start_date=$5,
+    workouts=$6::jsonb, progression=$7::jsonb, updated_at=NOW() WHERE id=$1 AND user_id='local'
+    RETURNING id, name, description, training_days AS "trainingDays", start_date AS "startDate", workouts, progression, created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [id, input.name, input.description, JSON.stringify(input.trainingDays), input.startDate, JSON.stringify(input.workouts), JSON.stringify(input.progression)])
+  return result.rows[0] ? normalizeGymRoutine(result.rows[0]) : null
+}
+
+export async function deleteGymRoutine(id: string): Promise<boolean> {
+  if (!postgresAvailable) {
+    const before = localGymRoutines.length
+    localGymRoutines = localGymRoutines.filter(routine => routine.id !== id)
+    if (localGymRoutines.length !== before) await saveCollection('gym-routines.json', localGymRoutines)
+    return localGymRoutines.length !== before
+  }
+  const result = await pool.query(`DELETE FROM gym_routines WHERE id=$1 AND user_id='local'`, [id])
+  return Boolean(result.rowCount)
+}
+
 export async function listAttachments(memoryId: string): Promise<AttachmentRecord[]> {
   if (!postgresAvailable) return []
   const result = await pool.query(`SELECT id, memory_id AS "memoryId", filename, mime_type AS "mimeType", byte_size AS "byteSize", storage_key AS "storageKey"
@@ -360,7 +472,7 @@ export async function exportData() {
   return {
     tasks: await listTasks(), events: await listEvents(), ideas: await listIdeas(),
     financialAccounts: await listFinancialAccounts(), financialTransactions: await listFinancialTransactions(), goals: await listGoals(),
-    movies: await listMovies(), music: await listMusic(), memories: await listMemories()
+    movies: await listMovies(), music: await listMusic(), memories: await listMemories(), gymRoutines: await listGymRoutines()
   }
 }
 
@@ -368,7 +480,7 @@ export type RestoreData = {
   tasks: TaskRecord[]; events: EventRecord[]; ideas: IdeaRecord[];
   financialAccounts?: Array<{ id: string; name: string; kind: string; currency: string; openingBalanceMinor: number }>;
   financialTransactions?: FinancialTransaction[]; goals?: GoalRecord[];
-  movies?: MovieRecord[]; music?: MusicRecord[]; memories?: MemoryRecord[]
+  movies?: MovieRecord[]; music?: MusicRecord[]; memories?: MemoryRecord[]; gymRoutines?: GymRoutine[]
 }
 
 export async function restoreData(data: RestoreData) {
@@ -376,7 +488,8 @@ export async function restoreData(data: RestoreData) {
     localTasks = data.tasks.map((task, index) => ({ ...task, sortOrder: task.sortOrder ?? index * 1000 }))
     localEvents = data.events
     localIdeas = data.ideas
-    await saveLocalTasks(); await saveCollection('events.json', localEvents); await saveCollection('ideas.json', localIdeas)
+    localGymRoutines = data.gymRoutines ?? []
+    await saveLocalTasks(); await saveCollection('events.json', localEvents); await saveCollection('ideas.json', localIdeas); await saveCollection('gym-routines.json', localGymRoutines)
     return
   }
   const client = await pool.connect()
@@ -391,6 +504,7 @@ export async function restoreData(data: RestoreData) {
     await client.query('DELETE FROM movies WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM music_tracks WHERE user_id = $1', ['local'])
     await client.query('DELETE FROM memory_entries WHERE user_id = $1', ['local'])
+    await client.query('DELETE FROM gym_routines WHERE user_id = $1', ['local'])
     for (const task of [...data.tasks].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))) await client.query('INSERT INTO tasks (id, user_id, parent_id, summary, notes, due_date, priority, tags, list_name, sort_order, completed, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)', [task.id, 'local', task.parentId ?? null, task.summary, task.notes, task.dueDate, task.priority, JSON.stringify(task.tags), task.listName, task.sortOrder ?? 0, task.completed, task.createdAt])
     for (const event of data.events) await client.query('INSERT INTO calendar_events (id, user_id, title, event_date, notes) VALUES ($1,$2,$3,$4,$5)', [event.id, 'local', event.title, event.date, event.notes])
     for (const idea of data.ideas) await client.query('INSERT INTO ideas (id, user_id, title, body, created_at) VALUES ($1,$2,$3,$4,$5)', [idea.id, 'local', idea.title, idea.body, idea.createdAt])
@@ -400,6 +514,8 @@ export async function restoreData(data: RestoreData) {
     for (const movie of data.movies ?? []) await client.query('INSERT INTO movies (id, user_id, title, year, watched, rating, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)', [movie.id, 'local', movie.title, movie.year, movie.watched, movie.rating, movie.notes])
     for (const track of data.music ?? []) await client.query('INSERT INTO music_tracks (id, user_id, title, artist, album, listened) VALUES ($1,$2,$3,$4,$5,$6)', [track.id, 'local', track.title, track.artist, track.album, track.listened])
     for (const memory of data.memories ?? []) await client.query('INSERT INTO memory_entries (id, user_id, title, body, occurred_on) VALUES ($1,$2,$3,$4,$5)', [memory.id, 'local', memory.title, memory.body, memory.occurredOn])
+    for (const routine of data.gymRoutines ?? []) await client.query(`INSERT INTO gym_routines (id, user_id, name, description, training_days, start_date, workouts, progression, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb,$9,$10)`, [routine.id, 'local', routine.name, routine.description, JSON.stringify(routine.trainingDays), routine.startDate, JSON.stringify(routine.workouts), JSON.stringify(routine.progression), routine.createdAt, routine.updatedAt])
     await client.query('COMMIT')
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }
