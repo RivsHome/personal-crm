@@ -7,6 +7,9 @@ test('default gym routine preserves the requested A/B schedule and progression r
 
   assert.deepEqual(routine.trainingDays, ['monday', 'wednesday', 'friday'])
   assert.equal(routine.calendarEnabled, true)
+  assert.deepEqual(routine.workoutOrder, ['A', 'B'])
+  assert.deepEqual(routine.workouts.C, [])
+  assert.deepEqual(routine.cardioMinutes, { A: 0, B: 0, C: 0, D: 0, E: 0 })
   assert.equal(routine.workouts.A[0].name, 'Back squat')
   assert.equal(routine.workouts.A[0].sets, '3')
   assert.equal(routine.workouts.A[0].reps, '5')

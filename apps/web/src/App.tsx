@@ -88,8 +88,9 @@ function gymOccurrencesForDate(date: Date, routines: GymRoutine[]) {
     if (dayIndex < 0 || Number.isNaN(start.getTime()) || dateValue < start.getTime()) return []
     const cycleAnchor = new Date(start)
     cycleAnchor.setDate(cycleAnchor.getDate() - ((cycleAnchor.getDay() + 6) % 7))
-    const cycleWeek = Math.floor((dateValue - cycleAnchor.getTime()) / (7 * 24 * 60 * 60 * 1000)) % 2 + 1
-    const workout: 'A' | 'B' = (dayIndex + cycleWeek) % 2 === 1 ? 'A' : 'B'
+    const weekIndex = Math.floor((dateValue - cycleAnchor.getTime()) / (7 * 24 * 60 * 60 * 1000))
+    const order = routine.workoutOrder?.length ? routine.workoutOrder : ['A', 'B']
+    const workout = order[(weekIndex * routine.trainingDays.length + dayIndex) % order.length]
     return [{ routineId: routine.id, routineName: routine.name, workout }]
   })
 }
