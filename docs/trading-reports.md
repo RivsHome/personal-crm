@@ -43,14 +43,14 @@ Minimal synthetic JSON: {"schemaVersion":1,"reportId":"example-report","reported
 
 ## Browser read endpoints
 
-GET /api/trading/overview returns {bots,totals,staleAfterMinutes}; totals are separated by currency and use latest reports only. Each bot includes id, displayName, platform, keyPrefix, active, lastReportAt, positionsCount, freshness, report. The report includes id, reportedAt, receivedAt, platform, accountLabel, currency, equity, dayPnl, realizedPnlTotal, strategyNotes, riskFlags. No key digest or raw report is exposed.
+GET /api/trading/overview returns {bots,totals,staleAfterMinutes}; totals are separated by currency and use latest reports only. Each bot includes id, displayName, platform, keyPrefix, active, lastReportAt, positionsCount, freshness, report. The report includes id, reportedAt, receivedAt, platform, accountLabel, currency, equity, totalPnl, todayPnl, unrealizedPnl, realizedPnl, netDeposits, pnlBasis, strategyNotes, riskFlags. Legacy dayPnl and realizedPnlTotal aliases contain the resolved todayPnl and realizedPnl values. No key digest or raw report is exposed.
 GET /api/trading/bots returns safe metadata (id, displayName, platform, keyPrefix, active, createdAt, revokedAt, lastReportAt).
-GET /api/trading/history returns historical botId, platform, reportedAt, currency, equity, dayPnl, realizedPnlTotal.
+GET /api/trading/history returns historical botId, platform, reportedAt, receivedAt, currency and the same resolved metric fields and pnlBasis.
 GET /api/trading/positions and /api/trading/orders return current latest-report rows.
 GET /api/trading/trades and /api/trading/cash-flows return historical rows. Detail rows include camelCase stored fields plus botId, platform, currency, reportedAt; cash-flow currency overrides report currency if set.
 POST /api/trading/bots/:id/revoke returns {revoked:true}; 400 Invalid bot identifier., 404 Bot not found. for invalid or absent slugs.
 
-Read query fields: bot and platform (nonempty strings, maximum 2000); range (7d, 30d, 90d, all); from and to (offset datetimes, inclusive, from <= to). Unknown query fields are rejected with 400 {error: Invalid trading query.}. Range applies only to history, default 30d. from/to filter overview reports, history and positions/orders by reportedAt, trades by executedAt, cash flows by occurredAt; bots ignores dates. Freshness: never without a report, fresh until configured stale threshold, stale after threshold, critical strictly after 24 hours. TRADING_STALE_AFTER_MINUTES defaults to 120 (valid range 1..525600).
+Read query fields: bot and platform (nonempty strings, maximum 2000); range (7d, 30d, 90d, all); from and to (offset datetimes, inclusive, from <= to). Unknown query fields are rejected with 400 {error: Invalid trading query.}. Range applies only to history, default 30d. from/to filter overview reports, history and positions/orders by reportedAt, trades by executedAt, cash flows by occurredAt; bots ignores dates. Freshness uses receivedAt, not reportedAt: never without a report, fresh until configured stale threshold, stale after threshold, critical strictly after 24 hours. TRADING_STALE_AFTER_MINUTES defaults to 120 (valid range 1..525600).
 
 ## Operator CLI
 
@@ -65,3 +65,28 @@ node --import tsx apps/api/src/scripts/trading-keys.ts revoke <slug>
 Disables the key without deleting reports.
 node --import tsx apps/api/src/scripts/trading-keys.ts delete <slug> --with-data
 Irreversibly deletes the bot and its dependent data. Requires explicit operator authorization; no automatic cleanup of real data. CLI failures emit generic diagnostics and close database pools without printing digest/key input.
+
+## P&L accounting and presentation
+
+All server-side calculations use PostgreSQL NUMERIC and return decimal strings. Missing P&L inputs resolve to zero, never null; no JavaScript floating-point financial arithmetic is used. A bot without any report has report:null and is excluded from combined totals. Unknown/blank currency reports remain on individual bot cards and are not combined, even with other unknown denominations. No currency conversion is implied.
+
+For each latest snapshot, unrealizedPnl uses reported balances.unrealizedPnl, otherwise the sum of that snapshot’s position unrealizedPnl, otherwise zero. realizedPnl uses reported balances.realizedPnlTotal, otherwise the sum of that bot’s deduplicated trades’ realizedPnl, otherwise zero. Reported zero takes precedence over a computed nonzero value.
+
+netDeposits is deposits minus withdrawals across that bot’s cash-flow ledger. totalPnl is equity minus netDeposits when the bot has any cash-flow rows, otherwise realizedPnl plus unrealizedPnl. History uses cumulative flows effective no later than each snapshot, and uses realized plus unrealized P&L when no flows are effective yet. Historical trade fallback likewise excludes trades effective after the snapshot. An absent occurredAt/executedAt uses the containing report’s reportedAt for accounting cutoffs. The ledger is assumed to be denominated in the bot account currency; there is no FX conversion of separately labelled flows.
+
+todayPnl uses reported balances.dayPnl when present. Otherwise its baseline is the latest snapshot strictly before today’s midnight in America/New_York, or the first snapshot today if none exists before midnight. It is latest equity minus baseline equity minus net cash flows strictly after the baseline and up to the latest snapshot. One snapshot alone yields zero. pnlBasis identifies each resolved metric as reported or computed. equity is zero when absent. Combined metrics sum resolved per-bot equity, totalPnl, todayPnl, unrealizedPnl, realizedPnl and netDeposits separately per known currency, including bots with computed zeros.
+
+The read-only dashboard defaults to P&L, with an equity toggle, individual bot lines and a same-currency combined line carrying the most recent known snapshot forward. Charts alone use approximate numeric coordinates, retain single-point markers, and sample each line to at most 500 points while retaining endpoints and bucket extrema. Hover/focus exposes exact amounts. Money is rounded to two decimals using exact fixed-point presentation, signed P&L carries color plus a textual sign, quantities/prices retain significant decimals, and timestamps are America/New_York. Bot freshness badges include the receipt-based age in minutes; data-as-of is shown separately when reportedAt and receivedAt differ by more than ten minutes. Percentage return uses totalPnl divided by positive netDeposits; no positive basis is labelled N/A.
+
+## Read-only operator snapshot CLI
+
+After building, run one of the following with DATABASE_URL supplied privately by the operator:
+
+node apps/api/dist/scripts/trading-snapshot.js overview
+node apps/api/dist/scripts/trading-snapshot.js history
+node apps/api/dist/scripts/trading-snapshot.js positions
+node apps/api/dist/scripts/trading-snapshot.js trades
+node apps/api/dist/scripts/trading-snapshot.js orders
+node apps/api/dist/scripts/trading-snapshot.js cash-flows
+
+The default command is overview. Each prints the exact JSON contract from the shared endpoint reader; history explicitly uses range=all. This CLI neither starts a listener nor registers/revokes keys or writes records. It closes its database pool on success and failure. Its output is private account information: do not attach production snapshots to issues, tests, or commits. Validation uses synthetic isolated PostgreSQL schemas only; the production CLI was not run for this change.

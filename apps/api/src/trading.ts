@@ -54,7 +54,6 @@ export const reportInput = z.object({
 // pg returns NUMERIC as strings; no float parser or JS arithmetic is used for money.
 const camel = (row:Record<string,unknown>):Record<string,unknown> => Object.fromEntries(Object.entries(row).map(([k,v])=>[k.replace(/_([a-z])/g,(_,c:string)=>c.toUpperCase()),v instanceof Date?v.toISOString():v]))
 const botColumns = 'id, display_name, platform, key_prefix, active, created_at, revoked_at, last_report_at'
-const reportColumns = 'id, reported_at, received_at, platform, account_label, currency, equity, day_pnl, realized_pnl_total, strategy_notes, risk_flags'
 const latest = '(SELECT DISTINCT ON (bot_id) * FROM trading_reports ORDER BY bot_id, reported_at DESC, received_at DESC, id DESC)'
 const column = (name:string) => name.replace(/[A-Z]/g,c=>'_'+c.toLowerCase())
 async function insert(client:PoolClient, table:string, data:Record<string,unknown>, conflict='') {
@@ -139,6 +138,21 @@ export function registerTrading(app:FastifyInstance, pool:Pool) {
     } finally {client.release()}
   })
 
+  for(const route of ["overview","bots","history","positions","trades","orders","cash-flows"]) app.get(`/api/trading/${route}`,async(request,reply)=>{
+    const q=queryInput.safeParse(request.query)
+    if(!q.success)return reply.code(400).send({error:"Invalid trading query."})
+    return readTrading(pool,route,q.data)
+  })
+  app.post('/api/trading/bots/:id/revoke',async(request,reply)=>{
+    const id=botSlug.safeParse((request.params as {id:string}).id)
+    if(!id.success)return reply.code(400).send({error:'Invalid bot identifier.'})
+    const result=await pool.query('UPDATE trading_bots SET active=false,revoked_at=now() WHERE id=$1 RETURNING id',[id.data])
+    if(!result.rowCount)return reply.code(404).send({error:'Bot not found.'})
+    return {revoked:true}
+  })
+  })
+}
+
   const queryInput=z.object({bot:z.string().min(1).max(2000).optional(),platform:z.string().min(1).max(2000).optional(),range:z.enum(['7d','30d','90d','all']).optional(),from:timestamp.optional(),to:timestamp.optional()}).strict().refine(q=>!q.from||!q.to||Date.parse(q.from)<=Date.parse(q.to))
   type Query=z.infer<typeof queryInput>
   function filters(q:Query, timeColumn:string, history=false) {
@@ -151,47 +165,74 @@ export function registerTrading(app:FastifyInstance, pool:Pool) {
     if(history && (q.range??'30d')!=='all') add(`${timeColumn}>=now()-(?::int * interval '1 day')`,parseInt(q.range??'30d',10))
     return {sql:terms.length?' WHERE '+terms.join(' AND '):'',values}
   }
-  app.get('/api/trading/overview',async(request,reply)=>{
-    const q=queryInput.safeParse(request.query);if(!q.success)return reply.code(400).send({error:'Invalid trading query.'})
-    const f=filters(q.data,'r.reported_at')
-    const bots=(await pool.query(`SELECT ${botColumns.split(', ').map(c=>'b.'+c).join(', ')} FROM trading_bots b${filters({...q.data,from:undefined,to:undefined},'').sql} ORDER BY b.display_name`,filters({...q.data,from:undefined,to:undefined},'').values)).rows
-    const rawMinutes=Number(process.env.TRADING_STALE_AFTER_MINUTES??120)
-    const minutes=Number.isFinite(rawMinutes)&&rawMinutes>=1&&rawMinutes<=525600?rawMinutes:120
-    const reports=(await pool.query(`SELECT r.bot_id, ${reportColumns.split(', ').map(c=>'r.'+c).join(', ')}, (SELECT count(*)::int FROM trading_positions p WHERE p.report_id=r.id) AS positions_count FROM ${latest} r JOIN trading_bots b ON b.id=r.bot_id${f.sql}`,f.values)).rows
-    const totals=(await pool.query(`SELECT r.currency, CASE WHEN count(r.equity)=count(*) THEN sum(r.equity)::text ELSE NULL END AS equity, CASE WHEN count(r.day_pnl)=count(*) THEN sum(r.day_pnl)::text ELSE NULL END AS day_pnl, CASE WHEN count(r.realized_pnl_total)=count(*) THEN sum(r.realized_pnl_total)::text ELSE NULL END AS realized_pnl_total FROM ${latest} r JOIN trading_bots b ON b.id=r.bot_id${f.sql}${f.sql?' AND':' WHERE'} r.currency ~ '[^[:space:]]' GROUP BY r.currency ORDER BY r.currency`,f.values)).rows.map(camel)
-    return {bots:bots.map(b=>{
-      const found=reports.find(r=>r.bot_id===b.id)
-      const age=found?(Date.now()-new Date(found.reported_at).getTime())/60000:Infinity
-      const {bot_id:ignore,positions_count:count,...report}=found??{}
-      const {created_at:ignoreCreated,revoked_at:ignoreRevoked,...metadata}=b
-      return {...camel(metadata),report:found?camel(report):null,positionsCount:count??0,freshness:!found?'never':age>1440?'critical':age>minutes?'stale':'fresh'}
-    }),totals,staleAfterMinutes:minutes}
-  })
-  app.get('/api/trading/bots',async(request,reply)=>{
-    const q=queryInput.safeParse(request.query);if(!q.success)return reply.code(400).send({error:'Invalid trading query.'})
-    const f=filters({...q.data,from:undefined,to:undefined},'')
-    return (await pool.query(`SELECT ${botColumns.split(', ').map(c=>'b.'+c).join(', ')} FROM trading_bots b${f.sql} ORDER BY b.display_name`,f.values)).rows.map(camel)
-  })
-  // Filtering and flat rows use registered bot platform; reports/raw retain the reporter's platform.
-  app.get('/api/trading/history',async(request,reply)=>{
-    const q=queryInput.safeParse(request.query);if(!q.success)return reply.code(400).send({error:'Invalid trading query.'})
-    const f=filters(q.data,'r.reported_at',true)
-    return (await pool.query(`SELECT r.bot_id,b.platform AS platform,r.reported_at,r.currency,r.equity,r.day_pnl,r.realized_pnl_total FROM trading_reports r JOIN trading_bots b ON b.id=r.bot_id${f.sql} ORDER BY r.reported_at,r.id`,f.values)).rows.map(camel)
-  })
-  for(const [route,table,isLatest,timeColumn] of [
-    ['positions','trading_positions',true,'r.reported_at'],['orders','trading_orders',true,'r.reported_at'],
-    ['trades','trading_trades',false,'x.executed_at'],['cash-flows','trading_cash_flows',false,'x.occurred_at']
-  ] as const) app.get(`/api/trading/${route}`,async(request,reply)=>{
-    const q=queryInput.safeParse(request.query);if(!q.success)return reply.code(400).send({error:'Invalid trading query.'})
-    const f=filters(q.data,timeColumn)
-    return (await pool.query(`SELECT x.*,r.bot_id,b.platform AS platform,${route==='cash-flows'?'COALESCE(x.currency,r.currency)':'r.currency'} AS currency,r.reported_at FROM ${table} x JOIN ${isLatest?latest:'trading_reports'} r ON r.id=x.report_id JOIN trading_bots b ON b.id=r.bot_id${f.sql} ORDER BY ${timeColumn} DESC NULLS LAST,x.id`,f.values)).rows.map(camel)
-  })
-  app.post('/api/trading/bots/:id/revoke',async(request,reply)=>{
-    const id=botSlug.safeParse((request.params as {id:string}).id)
-    if(!id.success)return reply.code(400).send({error:'Invalid bot identifier.'})
-    const result=await pool.query('UPDATE trading_bots SET active=false,revoked_at=now() WHERE id=$1 RETURNING id',[id.data])
-    if(!result.rowCount)return reply.code(404).send({error:'Bot not found.'})
-    return {revoked:true}
-  })
-  })
+
+// All monetary arithmetic is PostgreSQL NUMERIC. Historical snapshots use only
+// ledger entries effective at that snapshot; receipt time is solely freshness.
+const metrics = (history=false) => `WITH measured AS (
+ SELECT r.*,
+ COALESCE(r.equity,0) AS measured_equity,
+ COALESCE(r.unrealized_pnl,(SELECT sum(p.unrealized_pnl) FROM trading_positions p WHERE p.report_id=r.id),0) AS measured_unrealized,
+ COALESCE(r.realized_pnl_total,(SELECT sum(t.realized_pnl) FROM trading_trades t JOIN trading_reports tr ON tr.id=t.report_id WHERE t.bot_id=r.bot_id ${history?"AND COALESCE(t.executed_at,tr.reported_at)<=r.reported_at":""}),0) AS measured_realized,
+ EXISTS(SELECT 1 FROM trading_cash_flows c JOIN trading_reports cr ON cr.id=c.report_id WHERE c.bot_id=r.bot_id ${history?"AND COALESCE(c.occurred_at,cr.reported_at)<=r.reported_at":""}) AS has_flows,
+ COALESCE((SELECT sum(CASE c.type WHEN $$withdrawal$$ THEN -c.amount WHEN $$deposit$$ THEN c.amount ELSE 0 END) FROM trading_cash_flows c JOIN trading_reports cr ON cr.id=c.report_id WHERE c.bot_id=r.bot_id ${history?"AND COALESCE(c.occurred_at,cr.reported_at)<=r.reported_at":""}),0) AS net_deposits,
+ baseline.id AS baseline_id,baseline.reported_at AS baseline_at,COALESCE(baseline.equity,0) AS baseline_equity
+ FROM ${history?"trading_reports":latest} r
+ LEFT JOIN LATERAL (
+ SELECT id,reported_at,equity FROM (
+  (SELECT br.id,br.reported_at,br.equity,0 AS priority FROM trading_reports br
+   WHERE br.bot_id=r.bot_id AND br.reported_at<=r.reported_at
+   AND br.reported_at < ((now() AT TIME ZONE $$America/New_York$$)::date AT TIME ZONE $$America/New_York$$)
+   ORDER BY br.reported_at DESC,br.received_at DESC,br.id DESC LIMIT 1)
+  UNION ALL
+  (SELECT br.id,br.reported_at,br.equity,1 AS priority FROM trading_reports br
+   WHERE br.bot_id=r.bot_id AND br.reported_at<=r.reported_at
+   AND br.reported_at >= ((now() AT TIME ZONE $$America/New_York$$)::date AT TIME ZONE $$America/New_York$$)
+   ORDER BY br.reported_at ASC,br.received_at DESC,br.id DESC LIMIT 1)
+ ) candidates ORDER BY priority LIMIT 1
+ ) baseline ON true
+), calculated AS (
+ SELECT m.*,
+ CASE WHEN has_flows THEN measured_equity-net_deposits ELSE measured_realized+measured_unrealized END AS total_pnl,
+ COALESCE(day_pnl,CASE WHEN baseline_id=id OR baseline_id IS NULL THEN 0 ELSE measured_equity-baseline_equity-COALESCE((SELECT sum(CASE c.type WHEN $$withdrawal$$ THEN -c.amount WHEN $$deposit$$ THEN c.amount ELSE 0 END) FROM trading_cash_flows c JOIN trading_reports cr ON cr.id=c.report_id WHERE c.bot_id=m.bot_id AND COALESCE(c.occurred_at,cr.reported_at)>m.baseline_at AND COALESCE(c.occurred_at,cr.reported_at)<=m.reported_at),0) END) AS today_pnl
+ FROM measured m
+), enriched AS (
+ SELECT c.*,json_build_object(
+ $$equity$$,CASE WHEN equity IS NULL THEN $$computed$$ ELSE $$reported$$ END,
+ $$unrealizedPnl$$,CASE WHEN unrealized_pnl IS NULL THEN $$computed$$ ELSE $$reported$$ END,
+ $$realizedPnl$$,CASE WHEN realized_pnl_total IS NULL THEN $$computed$$ ELSE $$reported$$ END,
+ $$todayPnl$$,CASE WHEN day_pnl IS NULL THEN $$computed$$ ELSE $$reported$$ END,
+ $$totalPnl$$,$$computed$$,$$netDeposits$$,$$computed$$) AS pnl_basis FROM calculated c
+)`
+const metricColumns = `r.measured_equity AS equity,r.measured_unrealized AS unrealized_pnl,r.measured_realized AS realized_pnl,r.measured_realized AS realized_pnl_total,r.today_pnl,r.today_pnl AS day_pnl,r.total_pnl,r.net_deposits,r.pnl_basis`
+export async function readTrading(pool:Pick<Pool,"query">,route:string,q:Query={}) {
+ if(route==="overview") {
+  const f=filters(q,"r.reported_at")
+  const bf=filters({...q,from:undefined,to:undefined},"")
+  const bots=(await pool.query(`SELECT ${botColumns.split(", ").map(c=>"b."+c).join(", ")} FROM trading_bots b${bf.sql} ORDER BY b.display_name`,bf.values)).rows
+  const rawMinutes=Number(process.env.TRADING_STALE_AFTER_MINUTES??120)
+  const minutes=Number.isFinite(rawMinutes)&&rawMinutes>=1&&rawMinutes<=525600?rawMinutes:120
+  const base=`${metrics()} SELECT r.bot_id,r.id,r.reported_at,r.received_at,r.platform,r.account_label,r.currency,r.strategy_notes,r.risk_flags,${metricColumns},(SELECT count(*)::int FROM trading_positions p WHERE p.report_id=r.id) AS positions_count FROM (SELECT DISTINCT ON(bot_id) * FROM enriched ORDER BY bot_id,reported_at DESC,received_at DESC,id DESC) r JOIN trading_bots b ON b.id=r.bot_id${f.sql}`
+  const reports=(await pool.query(base,f.values)).rows
+  const totals=(await pool.query(`SELECT currency,sum(equity)::text AS equity,sum(unrealized_pnl)::text AS unrealized_pnl,sum(realized_pnl)::text AS realized_pnl,sum(realized_pnl)::text AS realized_pnl_total,sum(today_pnl)::text AS today_pnl,sum(today_pnl)::text AS day_pnl,sum(total_pnl)::text AS total_pnl,sum(net_deposits)::text AS net_deposits FROM (${base}) totals WHERE currency ~ $$[^[:space:]]$$ GROUP BY currency ORDER BY currency`,f.values)).rows.map(camel)
+  return {bots:bots.map(b=>{
+   const found=reports.find(r=>r.bot_id===b.id)
+   const age=found?(Date.now()-new Date(found.received_at).getTime())/60000:Infinity
+   const {bot_id:ignore,positions_count:count,...report}=found??{}
+   const {created_at:ignoreCreated,revoked_at:ignoreRevoked,...metadata}=b
+   return {...camel(metadata),report:found?camel(report):null,positionsCount:count??0,freshness:!found?"never":age>1440?"critical":age>minutes?"stale":"fresh"}
+  }),totals,staleAfterMinutes:minutes}
+ }
+ if(route==="bots") {
+  const f=filters({...q,from:undefined,to:undefined},"")
+  return (await pool.query(`SELECT ${botColumns.split(", ").map(c=>"b."+c).join(", ")} FROM trading_bots b${f.sql} ORDER BY b.display_name`,f.values)).rows.map(camel)
+ }
+ if(route==="history") {
+  const f=filters(q,"r.reported_at",true)
+  return (await pool.query(`${metrics(true)} SELECT r.bot_id,b.platform,r.reported_at,r.received_at,r.currency,${metricColumns} FROM enriched r JOIN trading_bots b ON b.id=r.bot_id${f.sql} ORDER BY r.reported_at,r.received_at,r.id`,f.values)).rows.map(camel)
+ }
+ const spec={positions:["trading_positions",true,"r.reported_at"],orders:["trading_orders",true,"r.reported_at"],trades:["trading_trades",false,"x.executed_at"],"cash-flows":["trading_cash_flows",false,"x.occurred_at"]}[route]
+ if(!spec) throw new Error("Invalid trading read route.")
+ const [table,isLatest,timeColumn]=spec as [string,boolean,string]
+ const f=filters(q,timeColumn)
+ return (await pool.query(`SELECT x.*,r.bot_id,b.platform,${route==="cash-flows"?"COALESCE(x.currency,r.currency)":"r.currency"} AS currency,r.reported_at FROM ${table} x JOIN ${isLatest?latest:"trading_reports"} r ON r.id=x.report_id JOIN trading_bots b ON b.id=r.bot_id${f.sql} ORDER BY ${timeColumn} DESC NULLS LAST,x.id`,f.values)).rows.map(camel)
 }
