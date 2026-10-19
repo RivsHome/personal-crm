@@ -9,6 +9,145 @@ import path from 'node:path'
 import { reportInput, decimalInput, isTradingIngest, registerTrading } from './trading.js'
 import { runKeys } from './scripts/trading-keys.js'
 
+// Synthetic transactional ledger: no pg pool or network is used by these regressions.
+async function ledgerHarness(t:any) {
+  const {default:Fastify}=await import('fastify')
+  const key='synthetic-ingest-key'
+  const hash=createHash('sha256').update(key).digest('hex')
+  const rows=new Map<string,Record<string,any>>()
+  const reports=new Set<string>()
+  const queries:{sql:string;values:any[]}[]=[]
+  const logs:any[]=[]
+  let backup:typeof rows,reportBackup:typeof reports,releases=0,failCommit=false
+  const query=async(sql:string,values:any[]=[])=>{
+    queries.push({sql,values})
+    const result=(rows:any[]=[])=>({rows,rowCount:rows.length})
+    if(sql==='BEGIN') { backup=structuredClone(rows);reportBackup=new Set(reports);return result() }
+    if(sql==='COMMIT') { if(failCommit) throw new Error('synthetic commit failure');return result() }
+    if(sql==='ROLLBACK') { rows.clear();for(const [k,v] of backup)rows.set(k,v);reports.clear();for(const v of reportBackup)reports.add(v);return result() }
+    if(sql.startsWith('SELECT * FROM trading_bots')) {
+      assert.ok(sql.endsWith('FOR UPDATE'),'ledger writes serialized by authenticated bot lock')
+      assert.equal(values[0],hash)
+      return result([{id:'synthetic',platform:'paper',key_hash:hash}])
+    }
+    if(sql.startsWith('SELECT count(*)')) return result([{count:0}])
+    const inserting=sql.match(/^INSERT INTO (trading_reports|trading_trades|trading_cash_flows) \(([^)]+)\)/)
+    if(inserting) {
+      const [,table,columns]=inserting
+      const data=Object.fromEntries(columns.split(',').map((c,i)=>[c,values[i]]))
+      if(table==='trading_reports') {
+        if(reports.has(data.report_id)) return result()
+        reports.add(data.report_id);return result([{id:`report-${data.report_id}`}])
+      }
+      const id=data.external_id??`anonymous-${rows.size}`
+      const lookup=`${table}:${data.bot_id}:${id}`
+      if(rows.has(lookup)) return result()
+      const row={id:`ledger-${rows.size}`, ...data};rows.set(lookup,row);return result([{id:row.id}])
+    }
+    const selecting=sql.match(/^SELECT id,.* FROM (trading_trades|trading_cash_flows) WHERE bot_id=\$1 AND external_id=\$2$/)
+    if(selecting) {
+      assert.equal(values[0],'synthetic','externalId lookup is scoped to authenticated bot')
+      const row=rows.get(`${selecting[1]}:${values[0]}:${values[1]}`)
+      if(!row)return result()
+      // Emulate PostgreSQL NUMERIC and timestamptz equality, not JS money arithmetic.
+      const equal=(column:string,a:any,b:any)=>{
+        if(/^(qty|price|fee|realized_pnl|amount)$/.test(column)) {
+          const normalize=(v:any)=>String(v).replace(/^(-?)0+(?=\d)/,'$1').replace(/(\.\d*?)0+$/,'$1').replace(/\.$/,'').replace(/^-0$/,'0')
+          return a!=null&&b!=null?normalize(a)===normalize(b):a==b
+        }
+        if(column.endsWith('_at'))return a!=null&&b!=null?Date.parse(a)===Date.parse(b):a==b
+        return a===b
+      }
+      const comparisons=[...sql.matchAll(/CASE WHEN (\w+) IS DISTINCT FROM \$(\d+) THEN '(\w+)' END/g)]
+      assert.equal(comparisons.length,values.length-2,'every supplied field compared in SQL')
+      return result([{id:row.id,changed_fields:comparisons.filter(([,c,index])=>!equal(c,row[c],values[Number(index)-1])).map(([, , ,field])=>field)}])
+    }
+    const updating=sql.match(/^UPDATE (trading_trades|trading_cash_flows) SET (.+) WHERE id=\$1$/)
+    if(updating) {
+      const row=[...rows.values()].find(row=>row.id===values[0])!
+      assert.ok(row)
+      for(const assignment of updating[2].split(',')) {
+        const [,column,index]=assignment.match(/^(\w+)=\$(\d+)$/)!
+        row[column]=values[Number(index)-1]
+      }
+      return result([{id:row.id}])
+    }
+    if(/^(DELETE FROM trading_ingest_attempts|INSERT INTO trading_ingest_attempts|UPDATE trading_bots)/.test(sql))return result()
+    throw new Error(`Unexpected mock SQL: ${sql}`)
+  }
+  const app=Fastify()
+  // Capture only application correction events, without request serializer noise.
+  app.addHook('onRequest',async request=>{request.log.info=((fields:any,message:string)=>{
+    if(message==='Trading ledger entry corrected.')logs.push({fields,message,committed:queries.at(-1)?.sql==='COMMIT'})
+  }) as any})
+  registerTrading(app,{connect:async()=>({query,release:()=>releases++})} as any)
+  t.after(()=>app.close())
+  const post=(reportId:string,data:object={})=>app.inject({method:'POST',url:'/api/trading/reports',headers:{authorization:`Bearer ${key}`},payload:{reportId,reportedAt:new Date().toISOString(),...data}})
+  return {post,rows,queries,logs,key,hash,reports,get releases(){return releases},failCommit:()=>{failCommit=true}}
+}
+
+for(const [table,collection,initial,correction,changedFields] of [
+  ['trading_cash_flows','cashFlows',{type:'deposit',amount:'1.000000000001',currency:'USD',note:'private-note'},{amount:'999999999999999999.999999999999'},['amount']],
+  ['trading_trades','trades',{side:'buy',qty:'1.000000000001',price:'2',fee:'0.1',realizedPnl:'3',symbol:'private-symbol'},{qty:'2.000000000001',price:'4',fee:'0.2',realizedPnl:'5'},['qty','price','fee','realizedPnl']],
+] as const) test(`${collection}: externalId corrections update in place and log only committed safe fields`,async t=>{
+  const h=await ledgerHarness(t)
+  const externalId='private-external-id'
+  const entry={externalId,...initial}
+  assert.equal((await h.post('original',{[collection]:[entry]})).statusCode,201)
+  const before=structuredClone([...h.rows.values()][0])
+  assert.equal((await h.post('corrected',{[collection]:[{externalId,...correction}]})).statusCode,201)
+  assert.equal(h.rows.size,1)
+  const row=[...h.rows.values()][0]
+  for(const [field,value] of Object.entries(correction))assert.equal(row[field.replace(/[A-Z]/g,c=>'_'+c.toLowerCase())],value)
+  assert.equal(row.id,before.id);assert.equal(row.report_id,before.report_id,'preserve original fallback effective date and currency')
+  const correctedColumns=new Set(Object.keys(correction).map(c=>c.replace(/[A-Z]/g,c=>'_'+c.toLowerCase())))
+  for(const [field,value] of Object.entries(before))if(!correctedColumns.has(field))assert.equal(row[field],value,'omitted fields preserved')
+  assert.deepEqual(h.logs,[{fields:{botId:'synthetic',ledger:table,entryId:row.id,changedFields},message:'Trading ledger entry corrected.',committed:true}])
+  for(const secret of [h.key,h.hash,externalId,'private-note','private-symbol'])assert.equal(JSON.stringify(h.logs).includes(secret),false)
+  // Replaying a reportId remains an early no-op, even if its ledger payload differs.
+  const writes=h.queries.filter(q=>q.sql.startsWith(`UPDATE ${table} SET`)).length
+  const replay=await h.post('corrected',{[collection]:[{externalId,...initial}]})
+  assert.deepEqual(replay.json(),{duplicate:true});assert.equal(replay.statusCode,200)
+  assert.equal(h.queries.filter(q=>q.sql.startsWith(`UPDATE ${table} SET`)).length,writes)
+  assert.equal(h.logs.length,1);assert.equal(h.releases,3)
+})
+
+test('equivalent decimals/timestamps, omitted fields and anonymous ledger entries keep replay semantics',async t=>{
+  const h=await ledgerHarness(t)
+  const cashFlows=[{externalId:'cash',amount:'1',occurredAt:'2026-01-01T00:00:00Z'}]
+  const trades=[{externalId:'trade',qty:'2',executedAt:'2026-01-01T00:00:00Z'}]
+  assert.equal((await h.post('first',{cashFlows,trades})).statusCode,201)
+  assert.equal((await h.post('identical',{cashFlows,trades})).statusCode,201)
+  assert.equal((await h.post('equivalent',{cashFlows:[{...cashFlows[0],amount:'01.000000000000',occurredAt:'2025-12-31T19:00:00-05:00'}],trades:[{...trades[0],qty:'2.000',executedAt:'2025-12-31T19:00:00-05:00'}]})).statusCode,201)
+  assert.equal((await h.post('omitted',{cashFlows:[{externalId:'cash'}],trades:[{externalId:'trade'}]})).statusCode,201)
+  assert.equal(h.queries.filter(q=>/^UPDATE trading_(trades|cash_flows) SET/.test(q.sql)).length,0)
+  assert.deepEqual(h.logs,[]);assert.equal(h.rows.size,2)
+  for(const id of ['anonymous-1','anonymous-2'])assert.equal((await h.post(id,{cashFlows:[{amount:'1'}],trades:[{qty:'1'}]})).statusCode,201)
+  assert.equal(h.rows.size,6,'without externalId, entries remain append-only')
+})
+
+test('zero and previously absent monetary values are real corrections, including within one report',async t=>{
+  const h=await ledgerHarness(t)
+  assert.equal((await h.post('original',{cashFlows:[{externalId:'cash',amount:'4'}],trades:[{externalId:'trade'}]})).statusCode,201)
+  assert.equal((await h.post('zero',{cashFlows:[{externalId:'cash',amount:'0'},{externalId:'cash',amount:'0.000'}],trades:[{externalId:'trade',realizedPnl:'0'},{externalId:'trade',realizedPnl:'0.000'}]})).statusCode,201)
+  assert.equal(h.rows.size,2)
+  assert.equal(h.rows.get('trading_cash_flows:synthetic:cash')?.amount,'0')
+  assert.equal(h.rows.get('trading_trades:synthetic:trade')?.realized_pnl,'0')
+  assert.deepEqual(h.logs.map(log=>log.fields.changedFields),[['realizedPnl'],['amount']])
+})
+
+test('failed commit rolls ledger corrections back, releases client and emits no correction log',async t=>{
+  const h=await ledgerHarness(t)
+  const entries={cashFlows:[{externalId:'cash',amount:'1'}],trades:[{externalId:'trade',qty:'1'}]}
+  assert.equal((await h.post('original',entries)).statusCode,201)
+  const before=structuredClone(h.rows)
+  h.failCommit()
+  const response=await h.post('failed',{cashFlows:[{externalId:'cash',amount:'2'}],trades:[{externalId:'trade',qty:'2'}]})
+  assert.equal(response.statusCode,500);assert.deepEqual(response.json(),{error:'Trading operation failed.'})
+  assert.deepEqual(h.rows,before);assert.equal(h.reports.has('failed'),false)
+  assert.equal(h.queries.at(-1)?.sql,'ROLLBACK');assert.equal(h.releases,2);assert.deepEqual(h.logs,[])
+})
+
 test('approved nested v1 schema, not the obsolete flat shape', () => {
   const base={reportId:'nested',reportedAt:new Date().toISOString()}
   assert.equal(reportInput.safeParse({...base,account:{platform:'test',label:'Synthetic',currency:'USD'},balances:{equity:'1'},positions:[{side:'yes'}],trades:[{side:'buy'}],orders:[{}],cashFlows:[{type:'deposit',note:'x'.repeat(10000)}],riskFlags:[{level:'warn',message:'Synthetic'}]}).success,true)
