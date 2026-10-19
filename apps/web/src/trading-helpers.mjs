@@ -40,6 +40,28 @@ export function filterRows(rows, filters = {}, now = Date.now()) {
     return !days || time >= now - days * 86400000
   })
 }
+// Rendering only: retain endpoints and chronological min/max within each bucket.
+// 249 interior buckets * 2 extrema + 2 endpoints = at most 500 points per line.
+// Input snapshots and exact financial totals are never modified or aggregated.
+function sampleChartPoints(points) {
+  if (points.length <= 500) return points
+  const sampled = [points[0]]
+  const interior = points.length - 2
+  for (let bucket = 0; bucket < 249; bucket++) {
+    const start = 1 + Math.floor(bucket * interior / 249)
+    const end = 1 + Math.floor((bucket + 1) * interior / 249)
+    let min = start; let max = start
+    for (let index = start + 1; index < end; index++) {
+      if (points[index].value < points[min].value) min = index
+      if (points[index].value > points[max].value) max = index
+    }
+    if (min === max) sampled.push(points[min])
+    else if (min < max) sampled.push(points[min], points[max])
+    else sampled.push(points[max], points[min])
+  }
+  sampled.push(points[points.length - 1])
+  return sampled
+}
 export function chartSeries(history) {
   const groups = new Map()
   for (const row of history) {
@@ -48,5 +70,5 @@ export function chartSeries(history) {
     if (!groups.has(key)) groups.set(key,{botId:row.botId,currency:row.currency,points:[]})
     groups.get(key).points.push({time:Date.parse(row.reportedAt),value:Number(row.equity),exact:row.equity})
   }
-  return [...groups.values()].map(line=>({...line,points:line.points.sort((a,b)=>a.time-b.time)}))
+  return [...groups.values()].map(line=>({...line,points:sampleChartPoints(line.points.sort((a,b)=>a.time-b.time))}))
 }

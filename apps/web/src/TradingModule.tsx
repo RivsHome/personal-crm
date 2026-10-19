@@ -32,10 +32,14 @@ export function EquityChart({history,bots}:{history:History[];bots:TradingBot[]}
   if (!lines.length) return <p className="trading-empty">No equity history in this date range.</p>
   return <>{[...new Set(lines.map(line=>line.currency))].map((currency,currencyIndex)=>{
     const series=lines.filter(line=>line.currency===currency)
-    const points=series.flatMap(line=>line.points); const minT=Math.min(...points.map(p=>p.time)); const maxT=Math.max(...points.map(p=>p.time)); const minV=Math.min(...points.map(p=>p.value));const maxV=Math.max(...points.map(p=>p.value))
+    let minT=Infinity; let maxT=-Infinity; let minV=Infinity; let maxV=-Infinity
+    for (const line of series) for (const point of line.points) {
+      minT=Math.min(minT,point.time); maxT=Math.max(maxT,point.time)
+      minV=Math.min(minV,point.value); maxV=Math.max(maxV,point.value)
+    }
     const x=(time:number)=>60+(time-minT)/(maxT-minT||1)*680; const y=(value:number)=>165-(value-minV)/(maxV-minV||1)*135
     return <figure className="trading-chart" key={currency}><figcaption>Equity · {currency} (approximate chart)</figcaption><svg viewBox="0 0 800 210" role="img" aria-labelledby={`${id}-${currencyIndex}`}><title id={`${id}-${currencyIndex}`}>{`Equity over time in ${currency}, separate line for each bot. Times America/New_York.`}</title><line x1="60" y1="165" x2="740" y2="165" stroke="currentColor" opacity=".3"/><text x="4" y="35">{maxV.toPrecision(5)}</text><text x="4" y="165">{minV.toPrecision(5)}</text>{series.map((line,index)=><g key={line.botId}><polyline fill="none" stroke={colors[index%colors.length]} strokeWidth="2.5" points={line.points.map(p=>`${x(p.time)},${y(p.value)}`).join(' ')}/>{line.points.map((point,i)=><circle key={i} cx={x(point.time)} cy={y(point.value)} r="3" fill={colors[index%colors.length]}><title>{`${bots.find(b=>b.id===line.botId)?.displayName || line.botId}: ${point.exact} ${currency} · ${formatTime(new Date(point.time).toISOString())}`}</title></circle>)}</g>)}<text x="60" y="195">{formatTime(new Date(minT).toISOString())}</text><text x="740" y="195" textAnchor="end">{formatTime(new Date(maxT).toISOString())}</text></svg><ul className="trading-legend">{series.map((line,index)=><li key={line.botId}><span style={{background:colors[index%colors.length]}}/>{bots.find(b=>b.id===line.botId)?.displayName || line.botId}</li>)}</ul></figure>
-  })}<p className="muted">Each line shows one bot’s reported equity, not a sum of historical snapshots. Exact amounts are available on chart point tooltips.</p></>
+  })}<p className="muted">Each line shows one bot’s reported equity, not a sum of historical snapshots. Long histories are sampled to at most 500 points per line, preserving endpoints and bucket minima/maxima. Exact reported amounts are available on retained chart point tooltips; financial totals are not sampled.</p></>
 }
 const tableColumns:Record<string,[string,string][]> = {
   positions:[['symbol','Symbol'],['market','Market'],['outcome','Outcome'],['side','Side'],['size','Size'],['entryPrice','Entry'],['markPrice','Mark'],['marketValue','Market value'],['unrealizedPnl','Unrealized PnL'],['leverage','Leverage'],['liquidationPrice','Liquidation'],['reportedAt','Reported']],
