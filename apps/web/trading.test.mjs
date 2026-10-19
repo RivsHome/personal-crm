@@ -8,8 +8,8 @@ test('exact decimal addition, null and negatives', () => {
 test('totals never combine currencies and use latest report per bot', () => {
   assert.deepEqual(totalsByCurrency([{currency:'USD',equity:'2',dayPnl:null,realizedPnlTotal:'1'},{currency:'BTC',equity:'0.1',dayPnl:'0.01',realizedPnlTotal:null}]).map(x=>[x.currency,x.equity]), [['USD','2'],['BTC','0.1']])
 })
-test('mixed unknown amounts do not silently understate totals', () => {
-  assert.equal(totalsByCurrency([{currency:'USD',equity:'10',dayPnl:'1',realizedPnlTotal:'2'},{currency:'USD',equity:null,dayPnl:'2',realizedPnlTotal:null}])[0].equity,null)
+test('missing metrics compute zero and never poison combined P&L', () => {
+  assert.equal(totalsByCurrency([{currency:'USD',equity:'10',dayPnl:'1',realizedPnlTotal:'2'},{currency:'USD',equity:null,dayPnl:'2',realizedPnlTotal:null}])[0].equity,'10')
 })
 test('freshness uses configured threshold and critical 24 hours', () => {
   const now = Date.parse('2026-01-02T12:00:00Z')
@@ -37,7 +37,7 @@ test('unknown denominations never combine even for two bots with the same missin
   for (const currency of [null, undefined, '', '  ', '\t\n']) {
     const reports = [{currency,equity:'10',dayPnl:'1',realizedPnlTotal:'2'},{currency,equity:'20',dayPnl:'2',realizedPnlTotal:'3'}]
     assert.deepEqual(totalsByCurrency(reports), [])
-    assert.deepEqual(totalsByCurrency([...reports,{currency:'USD',equity:'5',dayPnl:'0',realizedPnlTotal:'1'}]), [{currency:'USD',equity:'5',dayPnl:'0',realizedPnlTotal:'1'}])
+    assert.deepEqual(totalsByCurrency([...reports,{currency:'USD',equity:'5',dayPnl:'0',realizedPnlTotal:'1'}]), [{currency:'USD',equity:'5',totalPnl:'0',todayPnl:'0',netDeposits:'0',unrealizedPnl:'0',realizedPnl:'1'}])
   }
 })
 
@@ -74,4 +74,24 @@ test('chart sampling leaves short, flat, and invalid histories well defined', ()
   const short=history.slice(0,500).reverse()
   assert.equal(chartSeries(short)[0].points.length,500)
   assert.equal(short[0],history[499])
+})
+
+ test("money rounds exactly without Number precision loss; quantities retain significant decimals",async()=>{
+ const {formatMoney,formatQuantity,pnlPercent}=await import("./src/trading-helpers.mjs")
+ assert.equal(formatMoney("999999999999999999.125","USD"),"$999,999,999,999,999,999.13")
+ assert.equal(formatMoney(null,"USD",true),"$0.00")
+ assert.equal(formatMoney("-0.004","USD",true),"$0.00")
+ assert.equal(formatMoney("1.005","USD",true),"+$1.01")
+ assert.equal(formatQuantity("0.000000000001"),"0.000000000001")
+ assert.equal(pnlPercent("0.000000000001","0.000000000003"),"+33.33%")
+ })
+
+test('combined P&L carries latest per bot at each instant without float loss or currency mixing',async()=>{
+ const {combinedChartSeries}=await import('./src/trading-helpers.mjs')
+ const rows=[{botId:'a',currency:'USD',totalPnl:'0.000000000001',reportedAt:'2026-01-01T00:00:00Z'},{botId:'b',currency:'USD',totalPnl:'0.000000000002',reportedAt:'2026-01-01T00:00:00Z'},{botId:'a',currency:'USD',totalPnl:'-0.000000000001',reportedAt:'2026-01-02T00:00:00Z'},{botId:'c',currency:'EUR',totalPnl:'99',reportedAt:'2026-01-02T00:00:00Z'}]
+ const combined=combinedChartSeries(rows).filter(l=>l.botId==='__combined__')
+ assert.equal(combined.length,1)
+ assert.deepEqual(combined[0].points.map(p=>p.exact),['0.000000000003','0.000000000001'])
+ assert.equal(combined[0].currency,'USD')
+ assert.deepEqual(combinedChartSeries([{...rows[0],totalPnl:null,equity:'999'}],'totalPnl'),[])
 })

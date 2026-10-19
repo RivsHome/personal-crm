@@ -140,7 +140,7 @@ test('trading integration against isolated PostgreSQL', { skip: !process.env.TRA
       assert.equal(stored.platform,'other');assert.equal(stored.raw.account.platform,'other')
     } finally {await runKeys(['delete','platform-review','--with-data'],pool,io)}
   })
-  await t.test('overview excludes unknown denominations and never silently sums partial metrics',async()=>{
+  await t.test('overview excludes unknown denominations and computes missing metrics before summing',async()=>{
     const ids:string[]=[]
     try {
       for (const [i,currency,balances] of [
@@ -156,7 +156,7 @@ test('trading integration against isolated PostgreSQL', { skip: !process.env.TRA
       }
       const overview=(await app.inject({url:'/api/trading/overview?platform=totals-review',headers:sessionHeaders})).json()
       assert.equal(overview.bots.length,6)
-      assert.deepEqual(overview.totals,[{currency:'USD',equity:null,dayPnl:'3.000000000000',realizedPnlTotal:null}])
+      assert.deepEqual(overview.totals,[{currency:'USD',equity:'10.000000000000',dayPnl:'3.000000000000',realizedPnlTotal:'2.000000000000',realizedPnl:'2.000000000000',todayPnl:'3.000000000000',totalPnl:'2.000000000000',unrealizedPnl:'0',netDeposits:'0'}])
       assert.equal(overview.bots.find((b:any)=>b.id==='totals-review-2').report.equity,'100.000000000000')
       const unknown=(await app.inject({url:'/api/trading/overview?bot=totals-review-2',headers:sessionHeaders})).json()
       assert.deepEqual(unknown.totals,[]);assert.equal(unknown.bots[0].report.currency,null)
@@ -212,7 +212,7 @@ test('trading integration against isolated PostgreSQL', { skip: !process.env.TRA
     assert.equal(overview.bots[0].id,'synthetic')
     assert.deepEqual(Object.keys(overview).sort(),['bots','staleAfterMinutes','totals'])
     assert.deepEqual(Object.keys(overview.bots[0]).sort(),['active','displayName','freshness','id','keyPrefix','lastReportAt','platform','positionsCount','report'])
-    assert.deepEqual(Object.keys(overview.bots[0].report).sort(),['accountLabel','currency','dayPnl','equity','id','platform','realizedPnlTotal','receivedAt','reportedAt','riskFlags','strategyNotes'])
+    assert.deepEqual(Object.keys(overview.bots[0].report).sort(),['accountLabel','currency','dayPnl','equity','id','netDeposits','platform','pnlBasis','realizedPnl','realizedPnlTotal','receivedAt','reportedAt','riskFlags','strategyNotes','todayPnl','totalPnl','unrealizedPnl'])
     assert.equal(overview.bots[0].report.accountLabel,'Synthetic')
     assert.deepEqual(overview.bots[0].report.riskFlags,body.riskFlags)
     assert.equal(JSON.stringify(overview).includes(hash),false)
@@ -247,7 +247,7 @@ test('trading integration against isolated PostgreSQL', { skip: !process.env.TRA
     assert.equal((await get('positions?bot=missing')).length,0)
     await runKeys(['register','never','Never','test'],pool,{...io,read:async()=>createHash('sha256').update(randomBytes(32)).digest('hex')})
     assert.equal((await get('overview?bot=never')).bots[0].freshness,'never')
-    await pool.query("UPDATE trading_reports SET reported_at=now()-interval '3 hours' WHERE bot_id=$1",[second.id])
+    await pool.query("UPDATE trading_reports SET received_at=now()-interval '3 hours' WHERE bot_id=$1",[second.id])
     assert.equal((await get('overview?bot=second')).bots[0].freshness,'stale')
     const previousMinutes=process.env.TRADING_STALE_AFTER_MINUTES
     try {
@@ -257,11 +257,11 @@ test('trading integration against isolated PostgreSQL', { skip: !process.env.TRA
       process.env.TRADING_STALE_AFTER_MINUTES='invalid'
       assert.equal((await get('overview?bot=second')).staleAfterMinutes,120)
     } finally { if(previousMinutes===undefined)delete process.env.TRADING_STALE_AFTER_MINUTES;else process.env.TRADING_STALE_AFTER_MINUTES=previousMinutes }
-    await pool.query("UPDATE trading_reports SET reported_at=now()-interval '5 hours' WHERE bot_id=$1",[second.id])
+    await pool.query("UPDATE trading_reports SET received_at=now()-interval '5 hours' WHERE bot_id=$1",[second.id])
     assert.equal((await get('overview?bot=second')).bots[0].freshness,'stale')
-    await pool.query("UPDATE trading_reports SET reported_at=now()-interval '25 hours' WHERE bot_id=$1",[second.id])
+    await pool.query("UPDATE trading_reports SET received_at=now()-interval '25 hours' WHERE bot_id=$1",[second.id])
     assert.equal((await get('overview?bot=second')).bots[0].freshness,'critical')
-    const reported=(await pool.query('SELECT reported_at FROM trading_reports WHERE bot_id=$1',[second.id])).rows[0].reported_at.getTime()
+    const reported=(await pool.query('SELECT received_at FROM trading_reports WHERE bot_id=$1',[second.id])).rows[0].received_at.getTime()
     const clock=t.mock.method(Date,'now',()=>reported+24*60*60000)
     try {
       assert.equal((await get('overview?bot=second')).bots[0].freshness,'stale')
@@ -273,6 +273,15 @@ test('trading integration against isolated PostgreSQL', { skip: !process.env.TRA
     assert.equal((await get('orders?bot=second')).length,0)
     await runKeys(['delete','second','--with-data'],pool,io)
     await runKeys(['delete','never','--with-data'],pool,io)
+  })
+  await t.test("snapshot CLI JSON is identical to authenticated HTTP outputs",async()=>{
+    const {runSnapshot}=await import("./scripts/trading-snapshot.js")
+    for(const route of ["overview","history","positions","trades","orders","cash-flows"]) {
+      let output="";await runSnapshot([route],pool,value=>output+=value)
+      const response=await app.inject({url:`/api/trading/${route}${route==="history"?"?range=all":""}`,headers:sessionHeaders})
+      assert.equal(response.statusCode,200)
+      assert.deepEqual(JSON.parse(output),response.json(),route)
+    }
   })
   await t.test('CLI subprocess closes pools on success and failure without disclosing values',async()=>{
     const cli=path.join(root,'apps/api/src/scripts/trading-keys.ts')
