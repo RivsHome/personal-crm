@@ -61,6 +61,26 @@ async function insert(client:PoolClient, table:string, data:Record<string,unknow
   return client.query(`INSERT INTO ${table} (${entries.map(([k])=>column(k)).join(',')}) VALUES (${entries.map((_,i)=>'$'+(i+1)).join(',')}) ${conflict} RETURNING id`,entries.map(([,v])=>v))
 }
 
+type LedgerChange = {botId:string;ledger:string;entryId:string;changedFields:string[]}
+// The ingest transaction already holds this bot's row lock, serializing ledger
+// corrections across workers. Compare in PostgreSQL so NUMERIC/timestamps retain
+// their exact semantics; omitted fields are not corrections. Keep the original
+// report link (fallback effective time/currency) when updating an existing entry.
+async function insertLedger(client:PoolClient, table:'trading_trades'|'trading_cash_flows', botId:string, reportId:string, item:Record<string,unknown>):Promise<LedgerChange|undefined> {
+  const {externalId,...fields}=item
+  if(externalId!==undefined) {
+    const entries=Object.entries(fields).filter(([,v])=>v!==undefined)
+    const comparisons=entries.map(([k],i)=>`CASE WHEN ${column(k)} IS DISTINCT FROM $${i+3} THEN '${k}' END`)
+    const existing=(await client.query(`SELECT id,array_remove(ARRAY[${comparisons.join(',')}]::text[],NULL) AS changed_fields FROM ${table} WHERE bot_id=$1 AND external_id=$2`,[botId,externalId,...entries.map(([,v])=>v)])).rows[0]
+    if(existing) {
+      if(!existing.changed_fields.length)return
+      await client.query(`UPDATE ${table} SET ${entries.map(([k],i)=>`${column(k)}=$${i+2}`).join(',')} WHERE id=$1`,[existing.id,...entries.map(([,v])=>v)])
+      return {botId,ledger:table,entryId:existing.id,changedFields:existing.changed_fields}
+    }
+  }
+  await insert(client,table,{botId,reportId,...item},'ON CONFLICT (bot_id,external_id) DO NOTHING')
+}
+
 // Bounded rolling windows. IP failures are counted separately from authenticated bot traffic.
 class Windows {
   private entries = new Map<string,{count:number;expires:number}>()
@@ -127,10 +147,17 @@ export function registerTrading(app:FastifyInstance, pool:Pool) {
       const reportId=result.rows[0].id
       for(const item of positions) await insert(client,'trading_positions',{reportId,...item})
       for(const item of orders) await insert(client,'trading_orders',{reportId,...item})
-      for(const item of trades) await insert(client,'trading_trades',{botId:bot.id,reportId,...item},'ON CONFLICT (bot_id,external_id) DO NOTHING')
-      for(const item of cashFlows) await insert(client,'trading_cash_flows',{botId:bot.id,reportId,...item},'ON CONFLICT (bot_id,external_id) DO NOTHING')
+      const changes:LedgerChange[]=[]
+      for(const [table,items] of [['trading_trades',trades],['trading_cash_flows',cashFlows]] as const) {
+        for(const item of items) {
+          const change=await insertLedger(client,table,bot.id,reportId,item)
+          if(change)changes.push(change)
+        }
+      }
       await client.query('UPDATE trading_bots SET last_report_at=GREATEST(last_report_at,$2::timestamptz) WHERE id=$1',[bot.id,data.reportedAt])
       await client.query('COMMIT')
+      // Never log credentials, payload values, external IDs or uncommitted changes.
+      for(const change of changes)request.log.info(change,'Trading ledger entry corrected.')
       return reply.code(201).send({duplicate:false})
     } catch {
       await client.query('ROLLBACK').catch(()=>undefined)
@@ -181,11 +208,13 @@ const metrics = (history=false) => `WITH measured AS (
  SELECT id,reported_at,equity FROM (
   (SELECT br.id,br.reported_at,br.equity,0 AS priority FROM trading_reports br
    WHERE br.bot_id=r.bot_id AND br.reported_at<=r.reported_at
+   AND (br.reported_at<r.reported_at OR (br.received_at,br.id)<=(r.received_at,r.id))
    AND br.reported_at < ((now() AT TIME ZONE $$America/New_York$$)::date AT TIME ZONE $$America/New_York$$)
    ORDER BY br.reported_at DESC,br.received_at DESC,br.id DESC LIMIT 1)
   UNION ALL
   (SELECT br.id,br.reported_at,br.equity,1 AS priority FROM trading_reports br
    WHERE br.bot_id=r.bot_id AND br.reported_at<=r.reported_at
+   AND (br.reported_at<r.reported_at OR (br.received_at,br.id)<=(r.received_at,r.id))
    AND br.reported_at >= ((now() AT TIME ZONE $$America/New_York$$)::date AT TIME ZONE $$America/New_York$$)
    ORDER BY br.reported_at ASC,br.received_at DESC,br.id DESC LIMIT 1)
  ) candidates ORDER BY priority LIMIT 1

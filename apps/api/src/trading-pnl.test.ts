@@ -7,6 +7,19 @@ import {spawnSync} from "node:child_process"
 import pg from "pg"
 import * as trading from "./trading.js"
 
+test("baseline candidates never look ahead within equal reported timestamps (mock SQL)",async()=>{
+  for(const route of ["overview","history"]) {
+    const queries:string[]=[]
+    const pool={query:async(sql:string)=>{queries.push(sql);return {rows:[]}}}
+    await trading.readTrading(pool as any,route,{range:"all"})
+    const metricQueries=queries.filter(sql=>sql.includes("LEFT JOIN LATERAL"))
+    assert.ok(metricQueries.length>0)
+    for(const sql of metricQueries) {
+      assert.equal(sql.match(/WHERE br\.bot_id=r\.bot_id AND br\.reported_at<=r\.reported_at\s+AND \(br\.reported_at<r\.reported_at OR \(br\.received_at,br\.id\)<=\(r\.received_at,r\.id\)\)/g)?.length,2,route)
+    }
+  }
+})
+
 test("exact NUMERIC P&L rules on isolated PostgreSQL",{skip:!process.env.TRADING_TEST_DATABASE_URL},async t=>{
   assert.equal(typeof (trading as any).readTrading,"function","shared read API must exist")
   const url=new URL(process.env.TRADING_TEST_DATABASE_URL!)
