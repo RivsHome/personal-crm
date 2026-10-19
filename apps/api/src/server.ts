@@ -1,4 +1,7 @@
 import Fastify from 'fastify'
+import { pathToFileURL } from 'node:url'
+import { isTradingIngest, registerTrading } from './trading.js'
+import { pool } from './db.js'
 import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import multipart from '@fastify/multipart'
@@ -9,8 +12,12 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-const app = Fastify({ logger: true })
+export const app = Fastify({ logger: { redact: ['req.headers.authorization', 'req.headers.cookie', 'request.headers.authorization'] } })
 app.setErrorHandler((error, request, reply) => {
+  if (request.url.startsWith('/api/trading')) {
+    const code = (error as {statusCode?:number}).statusCode
+    return reply.code(code && code >= 400 && code < 500 ? code : 500).send({ error: code === 413 ? 'Report too large.' : 'Trading operation failed.' })
+  }
   request.log.error(error)
   const details = error as { statusCode?: number; message?: string }
   const statusCode = details.statusCode && details.statusCode < 500 ? details.statusCode : 500
@@ -28,14 +35,15 @@ const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
 const attempts = new Map<string, { count: number; resetAt: number }>()
 
 app.addHook('onRequest', async (request, reply) => {
+  if (request.url.startsWith('/api/trading')) reply.header('Cache-Control', 'no-store')
   if (!request.cookies[csrfCookie]) reply.setCookie(csrfCookie, randomBytes(24).toString('hex'), { httpOnly: false, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 60 * 60 * 24 })
   const isAuthEntry = request.url === '/api/auth/login' || request.url === '/api/auth/register'
-  if (!safeMethods.has(request.method) && !isAuthEntry && request.headers['x-csrf-token'] !== request.cookies[csrfCookie]) return reply.code(403).send({ error: 'Invalid CSRF token.' })
+  if (!safeMethods.has(request.method) && !isAuthEntry && !isTradingIngest(request.method, request.raw.url ?? '') && (!request.cookies[csrfCookie] || !request.headers['x-csrf-token'] || request.headers['x-csrf-token'] !== request.cookies[csrfCookie])) return reply.code(403).send({ error: 'Invalid CSRF token.' })
 })
 
 app.addHook('preHandler', async (request, reply) => {
-  const protectedPath = request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/gym') || request.url.startsWith('/api/diet') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
-  if (protectedPath && !current(request.cookies.session)) return reply.code(401).send({ error: 'Sign in required.' })
+  const protectedPath = request.url.startsWith('/api/trading') || request.url.startsWith('/api/tasks') || request.url.startsWith('/api/events') || request.url.startsWith('/api/ideas') || request.url.startsWith('/api/finance') || request.url.startsWith('/api/goals') || request.url.startsWith('/api/movies') || request.url.startsWith('/api/music') || request.url.startsWith('/api/memories') || request.url.startsWith('/api/gym') || request.url.startsWith('/api/diet') || request.url.startsWith('/api/export') || request.url.startsWith('/api/preferences') || request.url.startsWith('/api/restore')
+  if (protectedPath && !isTradingIngest(request.method, request.raw.url ?? '') && !current(request.cookies.session)) return reply.code(401).send({ error: 'Sign in required.' })
 })
 
 const taskInput = z.object({
@@ -322,7 +330,12 @@ app.delete('/api/attachments/:id', async (request, reply) => {
   return reply.code(204).send()
 })
 
-const port = Number(process.env.API_PORT ?? 3636)
-await initializeDatabase()
-await initializeAuth()
-await app.listen({ port, host: '0.0.0.0' })
+registerTrading(app, pool)
+
+// Importing the app for injection must not listen or initialize persistent state.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const port = Number(process.env.API_PORT ?? 3636)
+  await initializeDatabase()
+  await initializeAuth()
+  await app.listen({ port, host: '0.0.0.0' })
+}
