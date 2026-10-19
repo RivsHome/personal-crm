@@ -1,0 +1,21 @@
+import { useEffect, useState } from 'react'
+import { formatTime } from './trading-helpers.mjs'
+import type { ApiFetch, TradingBot } from './TradingModule'
+import './trading.css'
+export function TradingBotList({bots,onRevoke,busy}:{bots:TradingBot[];onRevoke:(bot:TradingBot)=>void;busy:boolean}) {
+  if (!bots.length) return <p className="trading-empty">No trading bots provisioned.</p>
+  return <div className="trading-table-wrap" role="region" aria-label="Trading bots table" tabIndex={0}><table><caption>Trading bot access · safe metadata only</caption><thead><tr>{['Display name','Platform','Status','Key prefix','Last report (New York)','Access'].map(label=><th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{bots.map(bot=><tr key={bot.id}><th scope="row">{bot.displayName}</th><td>{bot.platform}</td><td>{bot.active?'Active':'Revoked'}</td><td>{bot.keyPrefix || '—'}</td><td>{formatTime(bot.lastReportAt)}</td><td><button type="button" disabled={!bot.active||busy} onClick={()=>onRevoke(bot)} aria-label={`Revoke ${bot.displayName}`}>Revoke</button></td></tr>)}</tbody></table></div>
+}
+export function RevokeConfirmation({bot,busy,onConfirm,onCancel}:{bot:TradingBot;busy:boolean;onConfirm:()=>void;onCancel:()=>void}) {
+  return <div className="trading-confirm" role="alertdialog" aria-modal="false" aria-labelledby="trading-revoke-title" aria-describedby="trading-revoke-description"><h4 id="trading-revoke-title">Revoke {bot.displayName}?</h4><p id="trading-revoke-description">This permanently disables this bot’s reporting credential. Existing reports remain visible. Replacement credentials must be provisioned outside this dashboard.</p><button type="button" disabled={busy} onClick={onConfirm}>{busy?'Revoking…':'Confirm revoke'}</button> <button type="button" disabled={busy} onClick={onCancel} autoFocus>Cancel</button></div>
+}
+export default function TradingBots({apiFetch}:{apiFetch:ApiFetch}) {
+  const [bots,setBots]=useState<TradingBot[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [notice,setNotice]=useState('');const [pending,setPending]=useState<TradingBot|null>(null);const [busy,setBusy]=useState(false);const [refresh,setRefresh]=useState(0)
+  useEffect(()=>{const controller=new AbortController();setLoading(true);setError('');void apiFetch('/api/trading/bots',{signal:controller.signal}).then(async response=>{if(!response.ok)throw new Error(`Cannot load bots (${response.status}). Please retry.`);const rows=await response.json();if(!controller.signal.aborted)setBots(rows)}).catch(error=>{if(!controller.signal.aborted)setError(error.message)}).finally(()=>{if(!controller.signal.aborted)setLoading(false)});return()=>controller.abort()},[apiFetch,refresh])
+  async function revoke() {
+    if (!pending||busy) return
+    setBusy(true);setError('');setNotice('')
+    try {const response=await apiFetch(`/api/trading/bots/${encodeURIComponent(pending.id)}/revoke`,{method:'POST'});if(!response.ok)throw new Error(`Revoke failed (${response.status}). Access has not been confirmed revoked. Please retry.`);setBots(old=>old.map(bot=>bot.id===pending.id?{...bot,active:false}:bot));setNotice(`Access revoked for ${pending.displayName}.`);setPending(null);setRefresh(v=>v+1)}catch(error){setError(error instanceof Error?error.message:'Revoke failed. Please retry.')}finally{setBusy(false)}
+  }
+  return <section className="module-workspace panel trading-workspace" aria-label="Trading bot settings"><div className="trading-heading"><div><span className="panel-kicker">SETTINGS · INTEGRATIONS</span><h2>Trading bots</h2></div><button type="button" disabled={loading||busy} onClick={()=>setRefresh(v=>v+1)}>Refresh bots</button></div><p>Manage reporting access only. Credentials are provisioned outside this UI; secret keys are never displayed here. All times America/New_York.</p>{loading&&<p role="status">Loading trading bots…</p>}{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{!loading&&<TradingBotList bots={bots} busy={busy||!!pending} onRevoke={setPending}/ >}{pending&&<RevokeConfirmation bot={pending} busy={busy} onCancel={()=>setPending(null)} onConfirm={()=>void revoke()}/>}</section>
+}
